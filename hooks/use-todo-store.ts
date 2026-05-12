@@ -60,6 +60,7 @@ export function useTodoStore() {
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const lastPushedAtRef = useRef<number>(0);
+  const lastKnownRemoteVersionRef = useRef<number | null>(null);
   const isSyncingRef = useRef(false);
   const pendingSyncRef = useRef(false);
 
@@ -107,7 +108,7 @@ export function useTodoStore() {
       try {
         const { data, error } = await supabase
           .from("app_state")
-          .select("state, updated_at")
+          .select("state, updated_at, version")
           .eq("user_id", user.id)
           .maybeSingle();
 
@@ -123,6 +124,7 @@ export function useTodoStore() {
             user_id: user.id,
             state: currentState,
             updated_at: new Date().toISOString(),
+            version: 0,
           });
 
           if (insertError) {
@@ -130,6 +132,7 @@ export function useTodoStore() {
             pendingSyncRef.current = true;
           } else {
             lastPushedAtRef.current = currentState.lastUpdatedAt;
+            lastKnownRemoteVersionRef.current = 0;
             setSyncStatus("synced");
           }
           return;
@@ -138,7 +141,9 @@ export function useTodoStore() {
         // Remote row exists - compare timestamps
         const remoteUpdatedAt = new Date(data.updated_at).getTime();
         const remoteState = data.state as AppState;
+        const remoteVersion = data.version as number;
         const localUpdatedAt = currentState.lastUpdatedAt;
+        lastKnownRemoteVersionRef.current = remoteVersion;
 
         if (remoteUpdatedAt > localUpdatedAt) {
           // Remote is newer - use remote state
@@ -149,15 +154,23 @@ export function useTodoStore() {
           setState(reconciledState);
           saveLocalState(reconciledState);
           lastPushedAtRef.current = remoteUpdatedAt;
+          lastKnownRemoteVersionRef.current = remoteVersion;
         } else if (localUpdatedAt > remoteUpdatedAt) {
           // Local is newer - push to remote
+          if (lastKnownRemoteVersionRef.current === null) {
+            setSyncStatus("offline");
+            pendingSyncRef.current = true;
+            return;
+          }
           const { error: updateError } = await supabase
             .from("app_state")
             .update({
               state: currentState,
               updated_at: new Date().toISOString(),
+              version: lastKnownRemoteVersionRef.current + 1,
             })
-            .eq("user_id", user.id);
+            .eq("user_id", user.id)
+            .eq("version", lastKnownRemoteVersionRef.current);
 
           if (updateError) {
             setSyncStatus("offline");
@@ -165,6 +178,7 @@ export function useTodoStore() {
             return;
           }
           lastPushedAtRef.current = localUpdatedAt;
+          lastKnownRemoteVersionRef.current += 1;
         }
         // else: timestamps equal, already in sync
 
@@ -191,22 +205,59 @@ export function useTodoStore() {
 
       try {
         const supabase = supabaseRef.current;
-        const { error } = await supabase
+        const knownVersion = lastKnownRemoteVersionRef.current;
+        if (knownVersion === null) {
+          setSyncStatus("offline");
+          pendingSyncRef.current = true;
+          return;
+        }
+
+        const { data, error } = await supabase
           .from("app_state")
-          .upsert(
-            {
-              user_id: user.id,
-              state: newState,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "user_id" },
-          );
+          .update({
+            state: newState,
+            updated_at: new Date().toISOString(),
+            version: knownVersion + 1,
+          })
+          .eq("user_id", user.id)
+          .eq("version", knownVersion)
+          .select("version")
+          .maybeSingle();
 
         if (error) {
           setSyncStatus("offline");
           pendingSyncRef.current = true;
+        } else if (!data) {
+          const { data: latest, error: latestError } = await supabase
+            .from("app_state")
+            .select("state, updated_at, version")
+            .eq("user_id", user.id)
+            .maybeSingle();
+
+          if (latestError || !latest) {
+            setSyncStatus("offline");
+            pendingSyncRef.current = true;
+            return;
+          }
+
+          const remoteUpdatedAt = new Date(latest.updated_at).getTime();
+          const remoteState = latest.state as AppState;
+          const remoteVersion = latest.version as number;
+
+          lastKnownRemoteVersionRef.current = remoteVersion;
+          lastPushedAtRef.current = remoteUpdatedAt;
+          setState({
+            ...remoteState,
+            lastUpdatedAt: remoteUpdatedAt,
+          });
+          saveLocalState({
+            ...remoteState,
+            lastUpdatedAt: remoteUpdatedAt,
+          });
+          setSyncStatus("conflict");
         } else {
           lastPushedAtRef.current = newState.lastUpdatedAt;
+          lastKnownRemoteVersionRef.current = data.version;
           setSyncStatus("synced");
         }
       } catch {
@@ -275,11 +326,13 @@ export function useTodoStore() {
           const newRow = payload.new as {
             state: AppState;
             updated_at: string;
+            version: number;
           } | undefined;
 
           if (!newRow) return;
 
           const remoteUpdatedAt = new Date(newRow.updated_at).getTime();
+          lastKnownRemoteVersionRef.current = newRow.version;
 
           // Skip if this is our own push (timestamps match within 2 seconds)
           if (Math.abs(remoteUpdatedAt - lastPushedAtRef.current) < 2000) {

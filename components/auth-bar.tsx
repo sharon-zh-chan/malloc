@@ -93,6 +93,8 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
         return <Cloud className="h-3.5 w-3.5" />;
       case "offline":
         return <CloudOff className="h-3.5 w-3.5" />;
+      case "conflict":
+        return <CloudOff className="h-3.5 w-3.5 text-destructive" />;
       default:
         return null;
     }
@@ -106,6 +108,8 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
         return "Synced";
       case "offline":
         return "Offline";
+      case "conflict":
+        return "Conflict detected (remote applied)";
       default:
         return "";
     }
