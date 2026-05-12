@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@layer base {
+  :root {
+    --background: 48 100% 96%;
+    --foreground: 30 10% 15%;
+    --card: 48 100% 93%;
+    --card-foreground: 30 10% 15%;
+    --popover: 48 100% 96%;
+    --popover-foreground: 30 10% 15%;
+    --primary: 24 95% 53%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 40 60% 88%;
+    --secondary-foreground: 30 10% 15%;
+    --muted: 40 40% 90%;
+    --muted-foreground: 30 10% 40%;
+    --accent: 24 95% 53%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 24 80% 55%;
+    --input: 30 30% 75%;
+    --ring: 24 95% 53%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Sketchy border styles */
+.sketchy-border {
+  border: 2.5px solid hsl(24 80% 55%);
+  border-radius: 12px 8px 14px 6px;
+  box-shadow: 2px 3px 0px hsl(24 80% 55% / 0.15);
+}
+
+.sketchy-border-light {
+  border: 2px solid hsl(24 80% 55% / 0.5);
+  border-radius: 10px 6px 12px 8px;
+  box-shadow: 1px 2px 0px hsl(24 80% 55% / 0.1);
+}
+
+.sketchy-card {
+  background: hsl(48 100% 93%);
+  border: 2.5px solid hsl(24 80% 55%);
+  border-radius: 14px 8px 12px 10px;
+  box-shadow: 3px 4px 0px hsl(24 80% 55% / 0.12);
+}
+
+.sketchy-btn {
+  border: 2.5px solid hsl(24 80% 55%);
+  border-radius: 50%;
+  background: hsl(48 100% 96%);
+  transition: all 0.15s ease;
+  box-shadow: 2px 2px 0px hsl(24 80% 55% / 0.15);
+}
+
+.sketchy-btn:hover {
+  background: hsl(24 95% 53%);
+  color: white;
+  box-shadow: 1px 1px 0px hsl(24 80% 55% / 0.15);
+  transform: translate(1px, 1px);
+}
+
+.sketchy-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0px hsl(24 80% 55% / 0.15);
+}
