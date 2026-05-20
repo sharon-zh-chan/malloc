@@ -81,3 +81,45 @@
   transform: translate(2px, 2px);
   box-shadow: 0px 0px 0px hsl(24 80% 55% / 0.15);
 }
+
+.sketchy-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.sketchy-btn:disabled:hover {
+  background: hsl(48 100% 96%);
+  color: inherit;
+  box-shadow: 2px 2px 0px hsl(24 80% 55% / 0.15);
+  transform: none;
+}
+
+.rich-text-editor:empty::before {
+  content: attr(data-placeholder);
+  color: hsl(30 10% 40% / 0.7);
+  pointer-events: none;
+}
+
+.rich-text-editor h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 0.75rem 0 0.35rem;
+}
+
+.rich-text-editor p {
+  margin: 0 0 0.85rem;
+}
+
+.rich-text-editor ul,
+.rich-text-editor ol {
+  margin: 0.5rem 0 0.85rem 1.5rem;
+}
+
+.rich-text-editor ul {
+  list-style: disc;
+}
+
+.rich-text-editor ol {
+  list-style: decimal;
+}
