@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, hasSupabaseConfig } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import type { SyncStatus } from "@/lib/types";
 import {
@@ -29,8 +29,10 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
   const [message, setMessage] = useState("");
 
   const supabase = createClient();
+  const authEnabled = hasSupabaseConfig() && supabase;
 
   const handleSubmit = async () => {
+    if (!authEnabled) return;
     if (!email.trim() || !password.trim()) return;
     setLoading(true);
     setError("");
@@ -81,6 +83,7 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
   };
 
   const handleLogout = async () => {
+    if (!authEnabled) return;
     await supabase.auth.signOut();
     onAuthChange();
   };
@@ -138,6 +141,12 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
           <span className="hidden sm:inline">Log out</span>
         </button>
       </div>
+    );
+  }
+
+  if (!authEnabled) {
+    return (
+      <span className="text-xs text-muted-foreground">Local preview</span>
     );
   }
 

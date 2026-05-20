@@ -15,9 +15,19 @@ export interface TodoBlock {
   order: number;
 }
 
+export interface TextBlock {
+  id: string;
+  title: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+  order: number;
+}
+
 export interface AppState {
   timeRange: string;
   blocks: TodoBlock[];
+  textBlocks: TextBlock[];
   lastUpdatedAt: number;
 }
 

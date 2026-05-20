@@ -1,7 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { AppState, TodoBlock, TodoItem, ItemStatus, SyncStatus } from "@/lib/types";
+import type {
+  AppState,
+  TodoBlock,
+  TodoItem,
+  TextBlock,
+  ItemStatus,
+  SyncStatus,
+} from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
 import type { User, RealtimeChannel } from "@supabase/supabase-js";
 
@@ -12,33 +19,54 @@ function generateId(): string {
   return Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
 }
 
-const defaultState: AppState = {
-  timeRange: "",
-  blocks: [
-    {
-      id: generateId(),
-      title: "My Tasks",
-      items: [],
-      order: 0,
-    },
-  ],
-  lastUpdatedAt: Date.now(),
+function createDefaultState(): AppState {
+  return {
+    timeRange: "",
+    blocks: [
+      {
+        id: generateId(),
+        title: "My Tasks",
+        items: [],
+        order: 0,
+      },
+    ],
+    textBlocks: [],
+    lastUpdatedAt: 0,
+  };
+}
+
+type LocalStateResult = {
+  state: AppState;
+  hasStoredState: boolean;
 };
 
-function loadLocalState(): AppState {
-  if (typeof window === "undefined") return defaultState;
+function loadLocalState(): LocalStateResult {
+  if (typeof window === "undefined") {
+    return { state: createDefaultState(), hasStoredState: false };
+  }
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState;
-    const parsed = JSON.parse(raw) as AppState;
-    // Ensure lastUpdatedAt exists (migration from old format)
-    if (!parsed.lastUpdatedAt) {
-      parsed.lastUpdatedAt = Date.now();
+    if (!raw) {
+      return { state: createDefaultState(), hasStoredState: false };
     }
-    return parsed;
+
+    const parsed = migrateAppState(JSON.parse(raw) as Partial<AppState>);
+    return { state: parsed, hasStoredState: true };
   } catch {
-    return defaultState;
+    return { state: createDefaultState(), hasStoredState: false };
   }
+}
+
+function migrateAppState(raw: Partial<AppState>): AppState {
+  const fallback = createDefaultState();
+
+  return {
+    timeRange: raw.timeRange ?? fallback.timeRange,
+    blocks: Array.isArray(raw.blocks) ? raw.blocks : fallback.blocks,
+    textBlocks: Array.isArray(raw.textBlocks) ? raw.textBlocks : [],
+    lastUpdatedAt: raw.lastUpdatedAt || Date.now(),
+  };
 }
 
 function saveLocalState(state: AppState) {
@@ -50,8 +78,19 @@ function saveLocalState(state: AppState) {
   }
 }
 
+function hasMeaningfulLocalState(state: AppState): boolean {
+  return (
+    state.timeRange.trim().length > 0 ||
+    state.blocks.length !== 1 ||
+    state.blocks.some(
+      (block) => block.title !== "My Tasks" || block.items.length > 0,
+    ) ||
+    state.textBlocks.length > 0
+  );
+}
+
 export function useTodoStore() {
-  const [state, setState] = useState<AppState>(defaultState);
+  const [state, setState] = useState<AppState>(() => createDefaultState());
   const [hydrated, setHydrated] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
@@ -63,10 +102,14 @@ export function useTodoStore() {
   const lastKnownRemoteVersionRef = useRef<number | null>(null);
   const isSyncingRef = useRef(false);
   const pendingSyncRef = useRef(false);
+  const hasStoredLocalStateRef = useRef(false);
+  const hasCompletedInitialSyncRef = useRef(false);
+  const hasUserChangedStateRef = useRef(false);
 
   // ---- Auth listener ----
   useEffect(() => {
     const supabase = supabaseRef.current;
+    if (!supabase) return;
 
     supabase.auth.getUser().then(({ data: { user: u } }) => {
       setUser(u ?? null);
@@ -86,16 +129,27 @@ export function useTodoStore() {
   // ---- Hydrate from localStorage ----
   useEffect(() => {
     const local = loadLocalState();
-    setState(local);
+    hasStoredLocalStateRef.current = local.hasStoredState;
+    setState(local.state);
     setHydrated(true);
   }, []);
 
   // ---- Save to localStorage on every state change ----
   useEffect(() => {
-    if (hydrated) {
-      saveLocalState(state);
-    }
-  }, [state, hydrated]);
+    if (!hydrated) return;
+
+    const isRestoringRemoteState =
+      Boolean(user) &&
+      !hasCompletedInitialSyncRef.current &&
+      !hasStoredLocalStateRef.current;
+    const isEmptyStarterState = !hasMeaningfulLocalState(state);
+
+    if (isRestoringRemoteState && isEmptyStarterState) return;
+    if (!hasStoredLocalStateRef.current && isEmptyStarterState) return;
+
+    saveLocalState(state);
+    hasStoredLocalStateRef.current = true;
+  }, [state, hydrated, user]);
 
   // ---- Fetch remote state and reconcile ----
   const fetchAndReconcile = useCallback(
@@ -103,7 +157,9 @@ export function useTodoStore() {
       if (!user) return;
 
       const supabase = supabaseRef.current;
+      if (!supabase) return;
       setSyncStatus("syncing");
+      hasCompletedInitialSyncRef.current = false;
 
       try {
         const { data, error } = await supabase
@@ -133,6 +189,8 @@ export function useTodoStore() {
           } else {
             lastPushedAtRef.current = currentState.lastUpdatedAt;
             lastKnownRemoteVersionRef.current = 0;
+            hasCompletedInitialSyncRef.current = true;
+            hasUserChangedStateRef.current = false;
             setSyncStatus("synced");
           }
           return;
@@ -140,19 +198,26 @@ export function useTodoStore() {
 
         // Remote row exists - compare timestamps
         const remoteUpdatedAt = new Date(data.updated_at).getTime();
-        const remoteState = data.state as AppState;
+        const remoteState = migrateAppState(data.state as Partial<AppState>);
         const remoteVersion = data.version as number;
         const localUpdatedAt = currentState.lastUpdatedAt;
         lastKnownRemoteVersionRef.current = remoteVersion;
 
-        if (remoteUpdatedAt > localUpdatedAt) {
-          // Remote is newer - use remote state
+        if (
+          !hasStoredLocalStateRef.current ||
+          (!hasUserChangedStateRef.current &&
+            !hasMeaningfulLocalState(currentState)) ||
+          remoteUpdatedAt > localUpdatedAt
+        ) {
+          // Remote wins when local data is missing, default-only, or older.
           const reconciledState = {
             ...remoteState,
             lastUpdatedAt: remoteUpdatedAt,
           };
           setState(reconciledState);
           saveLocalState(reconciledState);
+          hasStoredLocalStateRef.current = true;
+          hasUserChangedStateRef.current = false;
           lastPushedAtRef.current = remoteUpdatedAt;
           lastKnownRemoteVersionRef.current = remoteVersion;
         } else if (localUpdatedAt > remoteUpdatedAt) {
@@ -179,9 +244,11 @@ export function useTodoStore() {
           }
           lastPushedAtRef.current = localUpdatedAt;
           lastKnownRemoteVersionRef.current += 1;
+          hasUserChangedStateRef.current = false;
         }
         // else: timestamps equal, already in sync
 
+        hasCompletedInitialSyncRef.current = true;
         setSyncStatus("synced");
       } catch {
         setSyncStatus("offline");
@@ -205,6 +272,7 @@ export function useTodoStore() {
 
       try {
         const supabase = supabaseRef.current;
+        if (!supabase) return;
         const knownVersion = lastKnownRemoteVersionRef.current;
         if (knownVersion === null) {
           setSyncStatus("offline");
@@ -241,7 +309,7 @@ export function useTodoStore() {
           }
 
           const remoteUpdatedAt = new Date(latest.updated_at).getTime();
-          const remoteState = latest.state as AppState;
+          const remoteState = migrateAppState(latest.state as Partial<AppState>);
           const remoteVersion = latest.version as number;
 
           lastKnownRemoteVersionRef.current = remoteVersion;
@@ -254,10 +322,13 @@ export function useTodoStore() {
             ...remoteState,
             lastUpdatedAt: remoteUpdatedAt,
           });
+          hasStoredLocalStateRef.current = true;
+          hasUserChangedStateRef.current = false;
           setSyncStatus("conflict");
         } else {
           lastPushedAtRef.current = newState.lastUpdatedAt;
           lastKnownRemoteVersionRef.current = data.version;
+          hasUserChangedStateRef.current = false;
           setSyncStatus("synced");
         }
       } catch {
@@ -273,6 +344,8 @@ export function useTodoStore() {
   // ---- Schedule debounced sync on state change ----
   useEffect(() => {
     if (!hydrated || !user) return;
+    if (!hasCompletedInitialSyncRef.current) return;
+    if (state.lastUpdatedAt <= lastPushedAtRef.current) return;
 
     if (syncTimeoutRef.current) {
       clearTimeout(syncTimeoutRef.current);
@@ -302,8 +375,9 @@ export function useTodoStore() {
   useEffect(() => {
     if (!user) {
       // Cleanup channel if user logs out
-      if (channelRef.current) {
-        supabaseRef.current.removeChannel(channelRef.current);
+      const supabase = supabaseRef.current;
+      if (channelRef.current && supabase) {
+        supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
       setSyncStatus("idle");
@@ -311,6 +385,7 @@ export function useTodoStore() {
     }
 
     const supabase = supabaseRef.current;
+    if (!supabase) return;
 
     const channel = supabase
       .channel("app_state_changes")
@@ -324,7 +399,7 @@ export function useTodoStore() {
         },
         (payload) => {
           const newRow = payload.new as {
-            state: AppState;
+            state: Partial<AppState>;
             updated_at: string;
             version: number;
           } | undefined;
@@ -343,10 +418,12 @@ export function useTodoStore() {
           setState((prev) => {
             if (remoteUpdatedAt > prev.lastUpdatedAt) {
               const updated = {
-                ...newRow.state,
+                ...migrateAppState(newRow.state),
                 lastUpdatedAt: remoteUpdatedAt,
               };
               saveLocalState(updated);
+              hasStoredLocalStateRef.current = true;
+              hasUserChangedStateRef.current = false;
               return updated;
             }
             return prev;
@@ -368,7 +445,11 @@ export function useTodoStore() {
     const handleOnline = () => {
       if (pendingSyncRef.current && user) {
         pendingSyncRef.current = false;
-        pushToRemote(state);
+        if (hasCompletedInitialSyncRef.current) {
+          pushToRemote(state);
+        } else {
+          fetchAndReconcile(state);
+        }
       }
     };
 
@@ -385,7 +466,7 @@ export function useTodoStore() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [user, state, pushToRemote]);
+  }, [user, state, pushToRemote, fetchAndReconcile]);
 
   // ---- Callback to trigger re-fetch after auth change ----
   const onAuthChange = useCallback(() => {
@@ -396,6 +477,7 @@ export function useTodoStore() {
   const updateState = useCallback((updater: (prev: AppState) => AppState) => {
     setState((prev) => {
       const next = updater(prev);
+      hasUserChangedStateRef.current = true;
       return { ...next, lastUpdatedAt: Date.now() };
     });
   }, []);
@@ -590,6 +672,70 @@ export function useTodoStore() {
     }));
   }, [updateState]);
 
+  const addTextBlock = useCallback(
+    (title: string) => {
+      const trimmed = title.trim();
+      if (!trimmed) return null;
+      if (state.textBlocks.length >= 30) return null;
+
+      const newBlock: TextBlock = {
+        id: generateId(),
+        title: trimmed,
+        content: "",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        order: state.textBlocks.length,
+      };
+
+      updateState((prev) => {
+        return { ...prev, textBlocks: [...prev.textBlocks, newBlock] };
+      });
+
+      return newBlock.id;
+    },
+    [state.textBlocks.length, updateState],
+  );
+
+  const updateTextBlockTitle = useCallback(
+    (blockId: string, title: string) => {
+      updateState((prev) => ({
+        ...prev,
+        textBlocks: prev.textBlocks.map((block) =>
+          block.id === blockId
+            ? { ...block, title, updatedAt: Date.now() }
+            : block,
+        ),
+      }));
+    },
+    [updateState],
+  );
+
+  const updateTextBlockContent = useCallback(
+    (blockId: string, content: string) => {
+      updateState((prev) => ({
+        ...prev,
+        textBlocks: prev.textBlocks.map((block) =>
+          block.id === blockId
+            ? { ...block, content, updatedAt: Date.now() }
+            : block,
+        ),
+      }));
+    },
+    [updateState],
+  );
+
+  const deleteTextBlock = useCallback(
+    (blockId: string) => {
+      updateState((prev) => ({
+        ...prev,
+        textBlocks: prev.textBlocks
+          .filter((block) => block.id !== blockId)
+          .map((block, index) => ({ ...block, order: index })),
+      }));
+    },
+    [updateState],
+  );
+
   return {
     state,
     hydrated,
@@ -608,5 +754,9 @@ export function useTodoStore() {
     softDeleteItem,
     undoDeleteItem,
     clearAndArchive,
+    addTextBlock,
+    updateTextBlockTitle,
+    updateTextBlockContent,
+    deleteTextBlock,
   };
 }
