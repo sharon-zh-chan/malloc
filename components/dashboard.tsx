@@ -45,7 +45,13 @@ export function Dashboard() {
     addTextBlock,
     updateTextBlockTitle,
     updateTextBlockContent,
+    updateTextBlockCollection,
+    archiveTextBlock,
+    restoreTextBlock,
     deleteTextBlock,
+    addMemoCollection,
+    updateMemoCollectionTitle,
+    deleteMemoCollection,
   } = useTodoStore();
 
   const [editingTimeRange, setEditingTimeRange] = useState(false);
@@ -271,11 +277,19 @@ export function Dashboard() {
         ) : (
           <TextBlocksPage
             blocks={state.textBlocks}
+            collections={state.memoCollections}
             selectedBlockId={selectedTextBlockId}
             onSelectBlock={setSelectedTextBlockId}
             onAddBlock={addTextBlock}
             onUpdateTitle={updateTextBlockTitle}
             onUpdateContent={updateTextBlockContent}
+            onUpdateCollection={updateTextBlockCollection}
+            onArchiveBlock={archiveTextBlock}
+            onRestoreBlock={restoreTextBlock}
+            onDeleteBlock={deleteTextBlock}
+            onAddCollection={addMemoCollection}
+            onUpdateCollectionTitle={updateMemoCollectionTitle}
+            onDeleteCollection={deleteMemoCollection}
           />
         )}
       </main>
@@ -285,6 +299,7 @@ export function Dashboard() {
         mode={activeView}
         blocks={state.blocks}
         textBlocks={state.textBlocks}
+        memoCollections={state.memoCollections}
         onClearAndArchive={clearAndArchive}
         onAddBlock={addBlock}
         onAddItemToBlock={addItem}
@@ -292,6 +307,7 @@ export function Dashboard() {
         onAddTextBlock={addTextBlock}
         onDeleteTextBlock={deleteTextBlock}
         onSelectTextBlock={setSelectedTextBlockId}
+        onAddMemoCollection={addMemoCollection}
       />
     </div>
   );

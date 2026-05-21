@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   AppState,
+  MemoCollection,
   TodoBlock,
   TodoItem,
   TextBlock,
@@ -31,6 +32,7 @@ function createDefaultState(): AppState {
       },
     ],
     textBlocks: [],
+    memoCollections: [],
     lastUpdatedAt: 0,
   };
 }
@@ -64,7 +66,17 @@ function migrateAppState(raw: Partial<AppState>): AppState {
   return {
     timeRange: raw.timeRange ?? fallback.timeRange,
     blocks: Array.isArray(raw.blocks) ? raw.blocks : fallback.blocks,
-    textBlocks: Array.isArray(raw.textBlocks) ? raw.textBlocks : [],
+    textBlocks: Array.isArray(raw.textBlocks)
+      ? raw.textBlocks.map((block) => ({
+          ...block,
+          collectionId: block.collectionId ?? null,
+          previousCollectionId: block.previousCollectionId ?? null,
+          archivedAt: block.archivedAt ?? null,
+        }))
+      : [],
+    memoCollections: Array.isArray(raw.memoCollections)
+      ? raw.memoCollections
+      : [],
     lastUpdatedAt: raw.lastUpdatedAt || Date.now(),
   };
 }
@@ -85,7 +97,8 @@ function hasMeaningfulLocalState(state: AppState): boolean {
     state.blocks.some(
       (block) => block.title !== "My Tasks" || block.items.length > 0,
     ) ||
-    state.textBlocks.length > 0
+    state.textBlocks.length > 0 ||
+    state.memoCollections.length > 0
   );
 }
 
@@ -673,7 +686,7 @@ export function useTodoStore() {
   }, [updateState]);
 
   const addTextBlock = useCallback(
-    (title: string) => {
+    (title: string, collectionId: string | null = null) => {
       const trimmed = title.trim();
       if (!trimmed) return null;
       if (state.textBlocks.length >= 30) return null;
@@ -682,6 +695,9 @@ export function useTodoStore() {
         id: generateId(),
         title: trimmed,
         content: "",
+        collectionId,
+        previousCollectionId: null,
+        archivedAt: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         order: state.textBlocks.length,
@@ -724,6 +740,67 @@ export function useTodoStore() {
     [updateState],
   );
 
+  const updateTextBlockCollection = useCallback(
+    (blockId: string, collectionId: string | null) => {
+      updateState((prev) => ({
+        ...prev,
+        textBlocks: prev.textBlocks.map((block) =>
+          block.id === blockId
+            ? {
+                ...block,
+                collectionId,
+                previousCollectionId: null,
+                archivedAt: null,
+                updatedAt: Date.now(),
+              }
+            : block,
+        ),
+      }));
+    },
+    [updateState],
+  );
+
+  const archiveTextBlock = useCallback(
+    (blockId: string) => {
+      updateState((prev) => ({
+        ...prev,
+        textBlocks: prev.textBlocks.map((block) =>
+          block.id === blockId
+            ? {
+                ...block,
+                previousCollectionId:
+                  block.previousCollectionId ?? block.collectionId ?? null,
+                collectionId: null,
+                archivedAt: Date.now(),
+                updatedAt: Date.now(),
+              }
+            : block,
+        ),
+      }));
+    },
+    [updateState],
+  );
+
+  const restoreTextBlock = useCallback(
+    (blockId: string) => {
+      updateState((prev) => ({
+        ...prev,
+        textBlocks: prev.textBlocks.map((block) =>
+          block.id === blockId
+            ? {
+                ...block,
+                collectionId: block.previousCollectionId ?? null,
+                previousCollectionId: null,
+                archivedAt: null,
+                updatedAt: Date.now(),
+              }
+            : block,
+        ),
+      }));
+    },
+    [updateState],
+  );
+
   const deleteTextBlock = useCallback(
     (blockId: string) => {
       updateState((prev) => ({
@@ -731,6 +808,77 @@ export function useTodoStore() {
         textBlocks: prev.textBlocks
           .filter((block) => block.id !== blockId)
           .map((block, index) => ({ ...block, order: index })),
+      }));
+    },
+    [updateState],
+  );
+
+  const addMemoCollection = useCallback(
+    (title: string) => {
+      const trimmed = title.trim();
+      if (!trimmed) return null;
+
+      const existing = state.memoCollections.find(
+        (collection) =>
+          collection.title.toLowerCase() === trimmed.toLowerCase(),
+      );
+      if (existing) return existing.id;
+
+      const collection: MemoCollection = {
+        id: generateId(),
+        title: trimmed,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        order: state.memoCollections.length,
+      };
+
+      updateState((prev) => ({
+        ...prev,
+        memoCollections: [...prev.memoCollections, collection],
+      }));
+
+      return collection.id;
+    },
+    [state.memoCollections, updateState],
+  );
+
+  const updateMemoCollectionTitle = useCallback(
+    (collectionId: string, title: string) => {
+      const trimmed = title.trim();
+      if (!trimmed) return;
+
+      updateState((prev) => ({
+        ...prev,
+        memoCollections: prev.memoCollections.map((collection) =>
+          collection.id === collectionId
+            ? { ...collection, title: trimmed, updatedAt: Date.now() }
+            : collection,
+        ),
+      }));
+    },
+    [updateState],
+  );
+
+  const deleteMemoCollection = useCallback(
+    (collectionId: string) => {
+      updateState((prev) => ({
+        ...prev,
+        memoCollections: prev.memoCollections.filter(
+          (collection) => collection.id !== collectionId,
+        ),
+        textBlocks: prev.textBlocks.map((block) =>
+          block.collectionId === collectionId
+            ? {
+                ...block,
+                collectionId: null,
+                previousCollectionId:
+                  block.previousCollectionId === collectionId
+                    ? null
+                    : block.previousCollectionId,
+                updatedAt: Date.now(),
+              }
+            : block,
+        ),
       }));
     },
     [updateState],
@@ -757,6 +905,12 @@ export function useTodoStore() {
     addTextBlock,
     updateTextBlockTitle,
     updateTextBlockContent,
+    updateTextBlockCollection,
+    archiveTextBlock,
+    restoreTextBlock,
     deleteTextBlock,
+    addMemoCollection,
+    updateMemoCollectionTitle,
+    deleteMemoCollection,
   };
 }

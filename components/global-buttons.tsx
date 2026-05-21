@@ -1,21 +1,24 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import type { TextBlock, TodoBlock } from "@/lib/types";
+import type { MemoCollection, TextBlock, TodoBlock } from "@/lib/types";
 import { Archive, Plus, Minus } from "lucide-react";
 import { ConfirmModal } from "./confirm-modal";
+import { MemoCollectionPicker } from "./memo-collection-picker";
 
 interface GlobalButtonsProps {
   mode: "stickies" | "memos";
   blocks: TodoBlock[];
   textBlocks: TextBlock[];
+  memoCollections: MemoCollection[];
   onClearAndArchive: () => void;
   onAddBlock: (title: string) => void;
   onAddItemToBlock: (blockId: string, text: string) => void;
   onDeleteBlock: (blockId: string) => void;
-  onAddTextBlock: (title: string) => string | null;
+  onAddTextBlock: (title: string, collectionId?: string | null) => string | null;
   onDeleteTextBlock: (blockId: string) => void;
   onSelectTextBlock: (blockId: string | null) => void;
+  onAddMemoCollection: (title: string) => string | null;
 }
 
 type AddStep = "choose" | "block-input" | "task-select" | "task-input";
@@ -24,6 +27,7 @@ export function GlobalButtons({
   mode,
   blocks,
   textBlocks,
+  memoCollections,
   onClearAndArchive,
   onAddBlock,
   onAddItemToBlock,
@@ -31,6 +35,7 @@ export function GlobalButtons({
   onAddTextBlock,
   onDeleteTextBlock,
   onSelectTextBlock,
+  onAddMemoCollection,
 }: GlobalButtonsProps) {
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -40,6 +45,9 @@ export function GlobalButtons({
   const [newBlockTitle, setNewBlockTitle] = useState("");
   const [newTaskText, setNewTaskText] = useState("");
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [selectedMemoCollectionId, setSelectedMemoCollectionId] = useState<
+    string | null
+  >(null);
   const [deleteBlockId, setDeleteBlockId] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -64,13 +72,14 @@ export function GlobalButtons({
     setNewBlockTitle("");
     setNewTaskText("");
     setSelectedBlockId(null);
+    setSelectedMemoCollectionId(null);
   };
 
   const handleAddBlock = () => {
     const trimmed = newBlockTitle.trim();
     if (trimmed) {
       if (mode === "memos") {
-        const newBlockId = onAddTextBlock(trimmed);
+        const newBlockId = onAddTextBlock(trimmed, selectedMemoCollectionId);
         if (newBlockId) onSelectTextBlock(newBlockId);
       } else {
         onAddBlock(trimmed);
@@ -171,7 +180,7 @@ export function GlobalButtons({
           }}
           role="dialog"
           aria-modal="true"
-          aria-label="Add task or block"
+          aria-label={mode === "memos" ? "Add memo" : "Add task or sticky"}
         >
           <div className="sketchy-card p-5 w-72 mx-4">
             {addStep === "choose" && (
@@ -247,6 +256,19 @@ export function GlobalButtons({
                   placeholder={`${mode === "memos" ? "Memo" : "Sticky"} title...`}
                   className="text-sm text-foreground bg-background/50 px-3 py-2 rounded sketchy-border-light outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground"
                 />
+                {mode === "memos" && (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Collection
+                    </label>
+                    <MemoCollectionPicker
+                      collections={memoCollections}
+                      value={selectedMemoCollectionId}
+                      onChange={setSelectedMemoCollectionId}
+                      onCreateCollection={onAddMemoCollection}
+                    />
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <button
                     type="button"

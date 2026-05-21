@@ -19,6 +19,17 @@ export interface TextBlock {
   id: string;
   title: string;
   content: string;
+  collectionId: string | null;
+  previousCollectionId?: string | null;
+  archivedAt?: number | null;
+  createdAt: number;
+  updatedAt: number;
+  order: number;
+}
+
+export interface MemoCollection {
+  id: string;
+  title: string;
   createdAt: number;
   updatedAt: number;
   order: number;
@@ -28,6 +39,7 @@ export interface AppState {
   timeRange: string;
   blocks: TodoBlock[];
   textBlocks: TextBlock[];
+  memoCollections: MemoCollection[];
   lastUpdatedAt: number;
 }
 
