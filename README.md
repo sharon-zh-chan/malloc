@@ -24,6 +24,58 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
+## REST API
+
+The API uses the same Supabase email/password accounts as the frontend. Do not
+share a Supabase service role key with users. Instead, exchange the user's email
+and password for a short-lived access token, then send it as a bearer token.
+
+Published docs:
+
+- Human-readable API docs: `/api-docs`
+- Machine-readable OpenAPI spec: `/api/openapi.json`
+
+### Sign in
+
+```bash
+curl -X POST http://localhost:3000/api/auth/token \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user@example.com","password":"password"}'
+```
+
+The response includes `access_token`, `refresh_token`, and expiry metadata.
+
+### Refresh a token
+
+```bash
+curl -X POST http://localhost:3000/api/auth/refresh \
+  -H 'Content-Type: application/json' \
+  -d '{"refresh_token":"<refresh_token>"}'
+```
+
+### Read app state
+
+```bash
+curl http://localhost:3000/api/app-state \
+  -H 'Authorization: Bearer <access_token>'
+```
+
+### Replace app state
+
+```bash
+curl -X PUT http://localhost:3000/api/app-state \
+  -H 'Authorization: Bearer <access_token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"state":{"timeRange":"","blocks":[],"textBlocks":[],"memoCollections":[],"lastUpdatedAt":0}}'
+```
+
+### Delete app state
+
+```bash
+curl -X DELETE http://localhost:3000/api/app-state \
+  -H 'Authorization: Bearer <access_token>'
+```
+
 ## Learn More
 
 To learn more, take a look at the following resources:
