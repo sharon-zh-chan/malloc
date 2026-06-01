@@ -1,0 +1,17 @@
+<svg width="104" height="104" viewBox="0 0 104 104" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">malloc symbol</title>
+  <desc id="desc">An irregular grid of memory blocks with a larger blue allocated block at the top right.</desc>
+  <g transform="translate(8 8)" stroke="#171717" stroke-width="2">
+    <rect x="0" y="0" width="88" height="88" fill="#FFFCF7"/>
+    <rect x="0" y="0" width="25" height="25"/>
+    <rect x="25" y="0" width="21" height="25"/>
+    <rect x="46" y="0" width="42" height="32" fill="#0047D6"/>
+    <rect x="0" y="25" width="30" height="27"/>
+    <rect x="30" y="25" width="16" height="27"/>
+    <rect x="46" y="32" width="24" height="20"/>
+    <rect x="70" y="32" width="18" height="20"/>
+    <rect x="0" y="52" width="20" height="36"/>
+    <rect x="20" y="52" width="34" height="36"/>
+    <rect x="54" y="52" width="34" height="36"/>
+  </g>
+</svg>

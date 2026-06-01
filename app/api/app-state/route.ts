@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createApiClient, getBearerToken } from "@/lib/api/supabase";
+import { getAuthenticatedClient } from "@/lib/api/auth";
 import type { AppState } from "@/lib/types";
 
 const appStateSchema = z.object({
@@ -10,31 +10,6 @@ const appStateSchema = z.object({
   memoCollections: z.array(z.unknown()).catch([]),
   lastUpdatedAt: z.number().catch(Date.now()),
 });
-
-async function getAuthenticatedClient(request: Request) {
-  const accessToken = getBearerToken(request);
-
-  if (!accessToken) {
-    return { error: "Missing bearer token", status: 401 } as const;
-  }
-
-  const supabase = createApiClient(accessToken);
-
-  if (!supabase) {
-    return { error: "Supabase is not configured", status: 503 } as const;
-  }
-
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser(accessToken);
-
-  if (error || !user) {
-    return { error: "Invalid bearer token", status: 401 } as const;
-  }
-
-  return { supabase, user } as const;
-}
 
 function normalizeState(state: unknown): AppState {
   const parsed = appStateSchema.parse(state);
@@ -55,24 +30,20 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 
-  const { data, error } = await auth.supabase
-    .from("app_state")
-    .select("state, updated_at, version")
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
+  const { data, error } = await auth.supabase.rpc("get_workspace_state");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  if (!data) {
+  if (!data?.state) {
     return NextResponse.json({ state: null, updated_at: null, version: null });
   }
 
   return NextResponse.json({
     state: normalizeState(data.state),
     updated_at: data.updated_at,
-    version: data.version ?? null,
+    version: null,
   });
 }
 
@@ -94,34 +65,9 @@ export async function PUT(request: Request) {
   }
 
   const state = normalizeState(result.data.state);
-  const updatedAt = new Date().toISOString();
-
-  const { data: existing, error: existingError } = await auth.supabase
-    .from("app_state")
-    .select("version")
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
-
-  if (existingError) {
-    return NextResponse.json({ error: existingError.message }, { status: 500 });
-  }
-
-  const nextVersion =
-    typeof existing?.version === "number" ? existing.version + 1 : 0;
-
-  const { data, error } = await auth.supabase
-    .from("app_state")
-    .upsert(
-      {
-        user_id: auth.user.id,
-        state: { ...state, lastUpdatedAt: Date.now() },
-        updated_at: updatedAt,
-        version: nextVersion,
-      },
-      { onConflict: "user_id" },
-    )
-    .select("state, updated_at, version")
-    .single();
+  const { data, error } = await auth.supabase.rpc("replace_workspace_state", {
+    replacement_state: state,
+  });
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -130,7 +76,7 @@ export async function PUT(request: Request) {
   return NextResponse.json({
     state: normalizeState(data.state),
     updated_at: data.updated_at,
-    version: data.version ?? null,
+    version: null,
   });
 }
 
@@ -141,10 +87,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 
-  const { error } = await auth.supabase
-    .from("app_state")
-    .delete()
-    .eq("user_id", auth.user.id);
+  const { error } = await auth.supabase.rpc("delete_workspace");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

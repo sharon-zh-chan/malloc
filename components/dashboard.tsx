@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useTodoStore } from "@/hooks/use-todo-store";
 import { TodoBlockCard } from "./todo-block";
 import { GlobalButtons } from "./global-buttons";
 import { AuthBar } from "./auth-bar";
 import { TextBlocksPage } from "./text-blocks-page";
-import { Pencil } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -30,7 +29,6 @@ export function Dashboard() {
     user,
     syncStatus,
     onAuthChange,
-    setTimeRange,
     addBlock,
     updateBlockTitle,
     deleteBlock,
@@ -42,6 +40,7 @@ export function Dashboard() {
     softDeleteItem,
     undoDeleteItem,
     clearAndArchive,
+    clearStickyArchivedTasks,
     addTextBlock,
     updateTextBlockTitle,
     updateTextBlockContent,
@@ -54,16 +53,12 @@ export function Dashboard() {
     deleteMemoCollection,
   } = useTodoStore();
 
-  const [editingTimeRange, setEditingTimeRange] = useState(false);
-  const [timeRangeText, setTimeRangeText] = useState(state.timeRange);
   const [activeView, setActiveView] = useState<"stickies" | "memos">(
     "stickies",
   );
   const [selectedTextBlockId, setSelectedTextBlockId] = useState<string | null>(
     null,
   );
-  const timeRangeRef = useRef<HTMLInputElement>(null);
-
   // Drag and drop sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -77,17 +72,6 @@ export function Dashboard() {
   );
 
   useEffect(() => {
-    setTimeRangeText(state.timeRange);
-  }, [state.timeRange]);
-
-  useEffect(() => {
-    if (editingTimeRange && timeRangeRef.current) {
-      timeRangeRef.current.focus();
-      timeRangeRef.current.select();
-    }
-  }, [editingTimeRange]);
-
-  useEffect(() => {
     if (
       selectedTextBlockId &&
       !state.textBlocks.some((block) => block.id === selectedTextBlockId)
@@ -95,11 +79,6 @@ export function Dashboard() {
       setSelectedTextBlockId(null);
     }
   }, [selectedTextBlockId, state.textBlocks]);
-
-  const handleTimeRangeSave = () => {
-    setTimeRange(timeRangeText.trim());
-    setEditingTimeRange(false);
-  };
 
   const moveBlock = (index: number, direction: "up" | "down") => {
     const newBlocks = [...state.blocks];
@@ -129,21 +108,27 @@ export function Dashboard() {
   if (!hydrated) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-muted-foreground text-lg animate-pulse">
-          Loading...
+        <div className="flex flex-col items-center gap-4 text-muted-foreground animate-pulse">
+          <img
+            src="/brand/malloc-symbol.svg"
+            alt=""
+            className="h-12 w-12"
+          />
+          <span className="brand-label">Allocating workspace</span>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen pb-24 md:pb-8">
-      {/* Header */}
-      <header className="px-4 md:px-8 pt-6 pb-4 md:mr-24">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <h1 className="text-2xl md:text-3xl font-bold text-foreground text-balance">
-            To Do at One Glance
-          </h1>
+    <div className="min-h-screen pb-8">
+      <header className="border-b brand-rule bg-card px-4 py-4 md:px-8">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <img
+            src="/brand/malloc-wordmark.svg"
+            alt="malloc - Space for what's on your mind."
+            className="h-16 w-auto sm:h-[76px]"
+          />
           <div className="flex-shrink-0 w-full sm:w-auto">
             <AuthBar
               user={user}
@@ -152,39 +137,12 @@ export function Dashboard() {
             />
           </div>
         </div>
+      </header>
 
-        <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {/* Time Range */}
-          <div className="flex items-center gap-2">
-            {editingTimeRange ? (
-              <input
-                ref={timeRangeRef}
-                value={timeRangeText}
-                onChange={(e) => setTimeRangeText(e.target.value)}
-                onBlur={handleTimeRangeSave}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleTimeRangeSave();
-                  if (e.key === "Escape") {
-                    setTimeRangeText(state.timeRange);
-                    setEditingTimeRange(false);
-                  }
-                }}
-                placeholder="e.g. Feb 3 - Feb 9, 2025"
-                className="text-sm text-foreground bg-background/50 px-3 py-1.5 rounded sketchy-border-light outline-none focus:ring-2 focus:ring-primary/30 w-64 placeholder:text-muted-foreground"
-              />
-            ) : (
-              <button
-                onClick={() => setEditingTimeRange(true)}
-                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <span>{state.timeRange || "Set a time range..."}</span>
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-
+      <section className="pb-5">
+        <div className="flex min-h-9 items-stretch justify-between border-b border-foreground bg-card px-4 md:px-8">
           <div
-            className="inline-flex h-9 w-fit items-center rounded-md bg-secondary/70 p-1"
+            className="flex items-stretch"
             role="tablist"
             aria-label="Workspace view"
           >
@@ -193,10 +151,10 @@ export function Dashboard() {
               role="tab"
               aria-selected={activeView === "stickies"}
               onClick={() => setActiveView("stickies")}
-              className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
+              className={`border-r border-foreground px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
                 activeView === "stickies"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-background hover:text-foreground"
               }`}
             >
               Stickies
@@ -206,20 +164,32 @@ export function Dashboard() {
               role="tab"
               aria-selected={activeView === "memos"}
               onClick={() => setActiveView("memos")}
-              className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${
+              className={`border-r border-foreground px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
                 activeView === "memos"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-background hover:text-foreground"
               }`}
             >
               Memos
             </button>
           </div>
+
+          <GlobalButtons
+            mode={activeView}
+            blocks={state.blocks}
+            textBlocks={state.textBlocks}
+            memoCollections={state.memoCollections}
+            onAddBlock={addBlock}
+            onAddTextBlock={addTextBlock}
+            onSelectTextBlock={setSelectedTextBlockId}
+            onAddMemoCollection={addMemoCollection}
+            onClearArchivedTasks={clearAndArchive}
+          />
         </div>
-      </header>
+      </section>
 
       {/* Main Workspace */}
-      <main className="px-4 md:px-8 md:mr-24">
+      <main className="px-4 md:px-8">
         {activeView === "stickies" ? (
           <>
             <DndContext
@@ -231,7 +201,7 @@ export function Dashboard() {
                 items={state.blocks.map((b) => b.id)}
                 strategy={rectSortingStrategy}
               >
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="brand-panel-grid grid grid-cols-1 gap-4 p-0 sm:grid-cols-2 lg:grid-cols-3">
                   {state.blocks.map((block, index) => (
                     <TodoBlockCard
                       key={block.id}
@@ -257,6 +227,8 @@ export function Dashboard() {
                       }
                       onMoveUp={() => moveBlock(index, "up")}
                       onMoveDown={() => moveBlock(index, "down")}
+                      onDeleteBlock={() => deleteBlock(block.id)}
+                      onClearTasks={() => clearStickyArchivedTasks(block.id)}
                     />
                   ))}
                 </div>
@@ -294,21 +266,6 @@ export function Dashboard() {
         )}
       </main>
 
-      {/* Global Action Buttons */}
-      <GlobalButtons
-        mode={activeView}
-        blocks={state.blocks}
-        textBlocks={state.textBlocks}
-        memoCollections={state.memoCollections}
-        onClearAndArchive={clearAndArchive}
-        onAddBlock={addBlock}
-        onAddItemToBlock={addItem}
-        onDeleteBlock={deleteBlock}
-        onAddTextBlock={addTextBlock}
-        onDeleteTextBlock={deleteTextBlock}
-        onSelectTextBlock={setSelectedTextBlockId}
-        onAddMemoCollection={addMemoCollection}
-      />
     </div>
   );
 }
