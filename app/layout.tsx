@@ -7,9 +7,9 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "malloc | Allocate space for what's on your mind",
+  title: "malloc | Space for what's on your mind",
   description:
-    "A lightweight workspace for allocating space to tasks, memos and thoughts.",
+    "A lightweight workspace for capturing tasks, memos and whatever is on your mind.",
   icons: {
     icon: "/brand/malloc-symbol.svg",
   },
