@@ -61,19 +61,15 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
         setPassword("");
       }
     } else {
-      console.log("[v0] Attempting login with email:", email.trim());
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
+      const { error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password: password.trim(),
       });
 
-      console.log("[v0] Login result - data:", data, "error:", authError);
       setLoading(false);
       if (authError) {
-        console.log("[v0] Login error:", authError.message);
         setError(authError.message);
       } else {
-        console.log("[v0] Login successful, session:", data.session);
         setEmail("");
         setPassword("");
         setMessage("");

@@ -130,7 +130,9 @@ export function Dashboard() {
             className="h-16 w-auto sm:h-[76px]"
           />
           <div className="flex-shrink-0 w-full sm:w-auto">
+            {/* Discard any password-manager DOM additions with the signed-out form. */}
             <AuthBar
+              key={user?.id ?? "signed-out"}
               user={user}
               syncStatus={syncStatus}
               onAuthChange={onAuthChange}
