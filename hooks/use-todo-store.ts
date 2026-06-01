@@ -10,11 +10,23 @@ import type {
   ItemStatus,
   SyncStatus,
 } from "@/lib/types";
+import type { WorkspaceMutation } from "@/lib/api/workspace-mutations";
 import { createClient } from "@/lib/supabase/client";
 import type { User, RealtimeChannel } from "@supabase/supabase-js";
 
 const STORAGE_KEY = "todo-at-one-glance";
-const SYNC_DEBOUNCE_MS = 500;
+const MUTATION_QUEUE_KEY = "todo-at-one-glance-pending-mutations";
+
+type QueuedMutation = {
+  id: string;
+  userId: string;
+  mutation: WorkspaceMutation;
+};
+
+type WorkspaceStateResponse = {
+  state: Partial<AppState> | null;
+  updated_at: string | null;
+};
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
@@ -35,29 +47,6 @@ function createDefaultState(): AppState {
     memoCollections: [],
     lastUpdatedAt: 0,
   };
-}
-
-type LocalStateResult = {
-  state: AppState;
-  hasStoredState: boolean;
-};
-
-function loadLocalState(): LocalStateResult {
-  if (typeof window === "undefined") {
-    return { state: createDefaultState(), hasStoredState: false };
-  }
-
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return { state: createDefaultState(), hasStoredState: false };
-    }
-
-    const parsed = migrateAppState(JSON.parse(raw) as Partial<AppState>);
-    return { state: parsed, hasStoredState: true };
-  } catch {
-    return { state: createDefaultState(), hasStoredState: false };
-  }
 }
 
 function migrateAppState(raw: Partial<AppState>): AppState {
@@ -81,25 +70,74 @@ function migrateAppState(raw: Partial<AppState>): AppState {
   };
 }
 
+function loadLocalState() {
+  if (typeof window === "undefined") {
+    return createDefaultState();
+  }
+
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      return createDefaultState();
+    }
+
+    return migrateAppState(JSON.parse(raw) as Partial<AppState>);
+  } catch {
+    return createDefaultState();
+  }
+}
+
 function saveLocalState(state: AppState) {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
-    // storage full or unavailable
+    // Storage may be full or unavailable.
   }
 }
 
-function hasMeaningfulLocalState(state: AppState): boolean {
-  return (
-    state.timeRange.trim().length > 0 ||
-    state.blocks.length !== 1 ||
-    state.blocks.some(
-      (block) => block.title !== "My Tasks" || block.items.length > 0,
-    ) ||
-    state.textBlocks.length > 0 ||
-    state.memoCollections.length > 0
-  );
+function loadMutationQueue(): QueuedMutation[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const queue = JSON.parse(localStorage.getItem(MUTATION_QUEUE_KEY) ?? "[]");
+    return Array.isArray(queue) ? (queue as QueuedMutation[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMutationQueue(queue: QueuedMutation[]) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(MUTATION_QUEUE_KEY, JSON.stringify(queue));
+  } catch {
+    // Storage may be full or unavailable.
+  }
+}
+
+function mutationQueueKey(mutation: WorkspaceMutation): string | null {
+  switch (mutation.action) {
+    case "setTimeRange":
+    case "reorderStickies":
+    case "clearArchivedTasks":
+      return mutation.action;
+    case "clearStickyArchivedTasks":
+      return `${mutation.action}:${mutation.payload.stickyId}`;
+    case "renameSticky":
+      return `${mutation.action}:${mutation.payload.stickyId}`;
+    case "editTask":
+      return `${mutation.action}:${mutation.payload.taskId}`;
+    case "reorderTasks":
+      return `${mutation.action}:${mutation.payload.stickyId}`;
+    case "renameMemo":
+    case "editMemo":
+    case "moveMemo":
+      return `${mutation.action}:${mutation.payload.memoId}`;
+    case "renameMemoCollection":
+      return `${mutation.action}:${mutation.payload.collectionId}`;
+    default:
+      return null;
+  }
 }
 
 export function useTodoStore() {
@@ -109,23 +147,152 @@ export function useTodoStore() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
 
   const supabaseRef = useRef(createClient());
-  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
-  const lastPushedAtRef = useRef<number>(0);
-  const lastKnownRemoteVersionRef = useRef<number | null>(null);
-  const isSyncingRef = useRef(false);
-  const pendingSyncRef = useRef(false);
-  const hasStoredLocalStateRef = useRef(false);
-  const hasCompletedInitialSyncRef = useRef(false);
-  const hasUserChangedStateRef = useRef(false);
+  const stateRef = useRef(state);
+  const userRef = useRef<User | null>(null);
+  const queueRef = useRef<QueuedMutation[]>([]);
+  const flushingRef = useRef(false);
+  const ownMutationIdsRef = useRef(new Set<string>());
 
-  // ---- Auth listener ----
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    const local = loadLocalState();
+    queueRef.current = loadMutationQueue();
+    setState(local);
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    saveLocalState(state);
+  }, [state, hydrated]);
+
+  const hydrateWorkspace = useCallback(async () => {
+    const currentUser = userRef.current;
+    const supabase = supabaseRef.current;
+    if (!currentUser || !supabase) return;
+
+    setSyncStatus("syncing");
+    const { data, error } = await supabase.rpc("get_workspace_state");
+
+    if (error) {
+      setSyncStatus("offline");
+      return;
+    }
+
+    const response = data as WorkspaceStateResponse;
+    const currentState = stateRef.current;
+
+    if (!response.state) {
+      const { data: replacement, error: replacementError } = await supabase.rpc(
+        "replace_workspace_state",
+        { replacement_state: currentState },
+      );
+
+      if (replacementError) {
+        setSyncStatus("offline");
+        return;
+      }
+
+      const nextState = migrateAppState(
+        (replacement as WorkspaceStateResponse).state ?? currentState,
+      );
+      setState(nextState);
+      saveLocalState(nextState);
+      setSyncStatus("synced");
+      return;
+    }
+
+    const remoteState = migrateAppState(response.state);
+    const remoteUpdatedAt = response.updated_at
+      ? new Date(response.updated_at).getTime()
+      : remoteState.lastUpdatedAt;
+
+    const nextState = { ...remoteState, lastUpdatedAt: remoteUpdatedAt };
+    setState(nextState);
+    saveLocalState(nextState);
+
+    setSyncStatus("synced");
+  }, []);
+
+  const flushMutationQueue = useCallback(async () => {
+    const currentUser = userRef.current;
+    const supabase = supabaseRef.current;
+    if (!currentUser || !supabase || flushingRef.current) return;
+
+    flushingRef.current = true;
+    setSyncStatus("syncing");
+
+    try {
+      while (true) {
+        const next = queueRef.current.find(
+          (queued) => queued.userId === currentUser.id,
+        );
+        if (!next) break;
+
+        ownMutationIdsRef.current.add(next.id);
+        const { error } = await supabase.rpc("apply_workspace_mutation", {
+          client_mutation_id: next.id,
+          action: next.mutation.action,
+          payload: next.mutation.payload,
+        });
+
+        if (error) {
+          ownMutationIdsRef.current.delete(next.id);
+          setSyncStatus("offline");
+          return;
+        }
+
+        queueRef.current = queueRef.current.filter(
+          (queued) => queued.id !== next.id,
+        );
+        saveMutationQueue(queueRef.current);
+      }
+
+      setSyncStatus("synced");
+    } finally {
+      flushingRef.current = false;
+    }
+  }, []);
+
+  const enqueueMutation = useCallback(
+    (mutation: WorkspaceMutation) => {
+      const currentUser = userRef.current;
+      if (!currentUser) return;
+
+      const queueKey = mutationQueueKey(mutation);
+      if (queueKey) {
+        queueRef.current = queueRef.current.filter(
+          (queued) =>
+            queued.userId !== currentUser.id ||
+            mutationQueueKey(queued.mutation) !== queueKey,
+        );
+      }
+
+      queueRef.current.push({
+        id: generateId(),
+        userId: currentUser.id,
+        mutation,
+      });
+      saveMutationQueue(queueRef.current);
+      void flushMutationQueue();
+    },
+    [flushMutationQueue],
+  );
+
   useEffect(() => {
     const supabase = supabaseRef.current;
     if (!supabase) return;
 
-    supabase.auth.getUser().then(({ data: { user: u } }) => {
-      setUser(u ?? null);
+    void supabase.auth.getUser().then(({ data: { user: currentUser } }) => {
+      setUser(currentUser ?? null);
     });
 
     const {
@@ -139,308 +306,43 @@ export function useTodoStore() {
     };
   }, []);
 
-  // ---- Hydrate from localStorage ----
-  useEffect(() => {
-    const local = loadLocalState();
-    hasStoredLocalStateRef.current = local.hasStoredState;
-    setState(local.state);
-    setHydrated(true);
-  }, []);
-
-  // ---- Save to localStorage on every state change ----
-  useEffect(() => {
-    if (!hydrated) return;
-
-    const isRestoringRemoteState =
-      Boolean(user) &&
-      !hasCompletedInitialSyncRef.current &&
-      !hasStoredLocalStateRef.current;
-    const isEmptyStarterState = !hasMeaningfulLocalState(state);
-
-    if (isRestoringRemoteState && isEmptyStarterState) return;
-    if (!hasStoredLocalStateRef.current && isEmptyStarterState) return;
-
-    saveLocalState(state);
-    hasStoredLocalStateRef.current = true;
-  }, [state, hydrated, user]);
-
-  // ---- Fetch remote state and reconcile ----
-  const fetchAndReconcile = useCallback(
-    async (currentState: AppState) => {
-      if (!user) return;
-
-      const supabase = supabaseRef.current;
-      if (!supabase) return;
-      setSyncStatus("syncing");
-      hasCompletedInitialSyncRef.current = false;
-
-      try {
-        const { data, error } = await supabase
-          .from("app_state")
-          .select("state, updated_at, version")
-          .eq("user_id", user.id)
-          .maybeSingle();
-
-        if (error) {
-          setSyncStatus("offline");
-          pendingSyncRef.current = true;
-          return;
-        }
-
-        if (!data) {
-          // No remote row yet - create one with current local state
-          const { error: insertError } = await supabase.from("app_state").insert({
-            user_id: user.id,
-            state: currentState,
-            updated_at: new Date().toISOString(),
-            version: 0,
-          });
-
-          if (insertError) {
-            setSyncStatus("offline");
-            pendingSyncRef.current = true;
-          } else {
-            lastPushedAtRef.current = currentState.lastUpdatedAt;
-            lastKnownRemoteVersionRef.current = 0;
-            hasCompletedInitialSyncRef.current = true;
-            hasUserChangedStateRef.current = false;
-            setSyncStatus("synced");
-          }
-          return;
-        }
-
-        // Remote row exists - compare timestamps
-        const remoteUpdatedAt = new Date(data.updated_at).getTime();
-        const remoteState = migrateAppState(data.state as Partial<AppState>);
-        const remoteVersion = data.version as number;
-        const localUpdatedAt = currentState.lastUpdatedAt;
-        lastKnownRemoteVersionRef.current = remoteVersion;
-
-        if (
-          !hasStoredLocalStateRef.current ||
-          (!hasUserChangedStateRef.current &&
-            !hasMeaningfulLocalState(currentState)) ||
-          remoteUpdatedAt > localUpdatedAt
-        ) {
-          // Remote wins when local data is missing, default-only, or older.
-          const reconciledState = {
-            ...remoteState,
-            lastUpdatedAt: remoteUpdatedAt,
-          };
-          setState(reconciledState);
-          saveLocalState(reconciledState);
-          hasStoredLocalStateRef.current = true;
-          hasUserChangedStateRef.current = false;
-          lastPushedAtRef.current = remoteUpdatedAt;
-          lastKnownRemoteVersionRef.current = remoteVersion;
-        } else if (localUpdatedAt > remoteUpdatedAt) {
-          // Local is newer - push to remote
-          if (lastKnownRemoteVersionRef.current === null) {
-            setSyncStatus("offline");
-            pendingSyncRef.current = true;
-            return;
-          }
-          const { error: updateError } = await supabase
-            .from("app_state")
-            .update({
-              state: currentState,
-              updated_at: new Date().toISOString(),
-              version: lastKnownRemoteVersionRef.current + 1,
-            })
-            .eq("user_id", user.id)
-            .eq("version", lastKnownRemoteVersionRef.current);
-
-          if (updateError) {
-            setSyncStatus("offline");
-            pendingSyncRef.current = true;
-            return;
-          }
-          lastPushedAtRef.current = localUpdatedAt;
-          lastKnownRemoteVersionRef.current += 1;
-          hasUserChangedStateRef.current = false;
-        }
-        // else: timestamps equal, already in sync
-
-        hasCompletedInitialSyncRef.current = true;
-        setSyncStatus("synced");
-      } catch {
-        setSyncStatus("offline");
-        pendingSyncRef.current = true;
-      }
-    },
-    [user],
-  );
-
-  // ---- Push state to remote (debounced) ----
-  const pushToRemote = useCallback(
-    async (newState: AppState) => {
-      if (!user) return;
-      if (isSyncingRef.current) {
-        pendingSyncRef.current = true;
-        return;
-      }
-
-      isSyncingRef.current = true;
-      setSyncStatus("syncing");
-
-      try {
-        const supabase = supabaseRef.current;
-        if (!supabase) return;
-        const knownVersion = lastKnownRemoteVersionRef.current;
-        if (knownVersion === null) {
-          setSyncStatus("offline");
-          pendingSyncRef.current = true;
-          return;
-        }
-
-        const { data, error } = await supabase
-          .from("app_state")
-          .update({
-            state: newState,
-            updated_at: new Date().toISOString(),
-            version: knownVersion + 1,
-          })
-          .eq("user_id", user.id)
-          .eq("version", knownVersion)
-          .select("version")
-          .maybeSingle();
-
-        if (error) {
-          setSyncStatus("offline");
-          pendingSyncRef.current = true;
-        } else if (!data) {
-          const { data: latest, error: latestError } = await supabase
-            .from("app_state")
-            .select("state, updated_at, version")
-            .eq("user_id", user.id)
-            .maybeSingle();
-
-          if (latestError || !latest) {
-            setSyncStatus("offline");
-            pendingSyncRef.current = true;
-            return;
-          }
-
-          const remoteUpdatedAt = new Date(latest.updated_at).getTime();
-          const remoteState = migrateAppState(latest.state as Partial<AppState>);
-          const remoteVersion = latest.version as number;
-
-          lastKnownRemoteVersionRef.current = remoteVersion;
-          lastPushedAtRef.current = remoteUpdatedAt;
-          setState({
-            ...remoteState,
-            lastUpdatedAt: remoteUpdatedAt,
-          });
-          saveLocalState({
-            ...remoteState,
-            lastUpdatedAt: remoteUpdatedAt,
-          });
-          hasStoredLocalStateRef.current = true;
-          hasUserChangedStateRef.current = false;
-          setSyncStatus("conflict");
-        } else {
-          lastPushedAtRef.current = newState.lastUpdatedAt;
-          lastKnownRemoteVersionRef.current = data.version;
-          hasUserChangedStateRef.current = false;
-          setSyncStatus("synced");
-        }
-      } catch {
-        setSyncStatus("offline");
-        pendingSyncRef.current = true;
-      } finally {
-        isSyncingRef.current = false;
-      }
-    },
-    [user],
-  );
-
-  // ---- Schedule debounced sync on state change ----
   useEffect(() => {
     if (!hydrated || !user) return;
-    if (!hasCompletedInitialSyncRef.current) return;
-    if (state.lastUpdatedAt <= lastPushedAtRef.current) return;
+    void flushMutationQueue().then(hydrateWorkspace);
+  }, [hydrated, user, flushMutationQueue, hydrateWorkspace]);
 
-    if (syncTimeoutRef.current) {
-      clearTimeout(syncTimeoutRef.current);
-    }
-
-    syncTimeoutRef.current = setTimeout(() => {
-      pushToRemote(state);
-    }, SYNC_DEBOUNCE_MS);
-
-    return () => {
-      if (syncTimeoutRef.current) {
-        clearTimeout(syncTimeoutRef.current);
-      }
-    };
-  }, [state, hydrated, user, pushToRemote]);
-
-  // ---- Initial fetch on login ----
   useEffect(() => {
-    if (hydrated && user) {
-      fetchAndReconcile(state);
-    }
-    // Only run when user changes or hydration completes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, hydrated]);
-
-  // ---- Realtime subscription ----
-  useEffect(() => {
-    if (!user) {
-      // Cleanup channel if user logs out
-      const supabase = supabaseRef.current;
+    const supabase = supabaseRef.current;
+    if (!user || !supabase) {
       if (channelRef.current && supabase) {
-        supabase.removeChannel(channelRef.current);
+        void supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
       setSyncStatus("idle");
       return;
     }
 
-    const supabase = supabaseRef.current;
-    if (!supabase) return;
-
     const channel = supabase
-      .channel("app_state_changes")
+      .channel("workspace_mutation_changes")
       .on(
         "postgres_changes",
         {
-          event: "*",
+          event: "INSERT",
           schema: "public",
-          table: "app_state",
+          table: "workspace_mutations",
           filter: `user_id=eq.${user.id}`,
         },
         (payload) => {
-          const newRow = payload.new as {
-            state: Partial<AppState>;
-            updated_at: string;
-            version: number;
-          } | undefined;
+          const mutationId = (payload.new as { client_mutation_id?: string })
+            .client_mutation_id;
+          if (!mutationId) return;
 
-          if (!newRow) return;
-
-          const remoteUpdatedAt = new Date(newRow.updated_at).getTime();
-          lastKnownRemoteVersionRef.current = newRow.version;
-
-          // Skip if this is our own push (timestamps match within 2 seconds)
-          if (Math.abs(remoteUpdatedAt - lastPushedAtRef.current) < 2000) {
+          if (ownMutationIdsRef.current.has(mutationId)) {
+            ownMutationIdsRef.current.delete(mutationId);
             return;
           }
 
-          // Remote is from another device - apply if newer
-          setState((prev) => {
-            if (remoteUpdatedAt > prev.lastUpdatedAt) {
-              const updated = {
-                ...migrateAppState(newRow.state),
-                lastUpdatedAt: remoteUpdatedAt,
-              };
-              saveLocalState(updated);
-              hasStoredLocalStateRef.current = true;
-              hasUserChangedStateRef.current = false;
-              return updated;
-            }
-            return prev;
-          });
+          void flushMutationQueue().then(hydrateWorkspace);
         },
       )
       .subscribe();
@@ -448,28 +350,17 @@ export function useTodoStore() {
     channelRef.current = channel;
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [user]);
+  }, [user, flushMutationQueue, hydrateWorkspace]);
 
-  // ---- Online/offline listener ----
   useEffect(() => {
     const handleOnline = () => {
-      if (pendingSyncRef.current && user) {
-        pendingSyncRef.current = false;
-        if (hasCompletedInitialSyncRef.current) {
-          pushToRemote(state);
-        } else {
-          fetchAndReconcile(state);
-        }
-      }
+      void flushMutationQueue().then(hydrateWorkspace);
     };
-
     const handleOffline = () => {
-      if (user) {
-        setSyncStatus("offline");
-      }
+      if (userRef.current) setSyncStatus("offline");
     };
 
     window.addEventListener("online", handleOnline);
@@ -479,409 +370,475 @@ export function useTodoStore() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [user, state, pushToRemote, fetchAndReconcile]);
+  }, [flushMutationQueue, hydrateWorkspace]);
 
-  // ---- Callback to trigger re-fetch after auth change ----
   const onAuthChange = useCallback(() => {
-    // Auth state change is handled by the listener above
+    // Auth state changes are handled by the Supabase listener above.
   }, []);
 
-  // ---- State mutation helpers ----
   const updateState = useCallback((updater: (prev: AppState) => AppState) => {
-    setState((prev) => {
-      const next = updater(prev);
-      hasUserChangedStateRef.current = true;
-      return { ...next, lastUpdatedAt: Date.now() };
-    });
+    setState((prev) => ({ ...updater(prev), lastUpdatedAt: Date.now() }));
   }, []);
+
+  const applyLocalMutation = useCallback(
+    (updater: (prev: AppState) => AppState, mutation: WorkspaceMutation) => {
+      updateState(updater);
+      enqueueMutation(mutation);
+    },
+    [enqueueMutation, updateState],
+  );
 
   const setTimeRange = useCallback(
     (timeRange: string) => {
-      updateState((prev) => ({ ...prev, timeRange }));
+      applyLocalMutation(
+        (prev) => ({ ...prev, timeRange }),
+        { action: "setTimeRange", payload: { timeRange } },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const addBlock = useCallback(
     (title: string) => {
-      updateState((prev) => {
-        if (prev.blocks.length >= 10) return prev;
-        const newBlock: TodoBlock = {
-          id: generateId(),
-          title,
-          items: [],
-          order: prev.blocks.length,
-        };
-        return { ...prev, blocks: [...prev.blocks, newBlock] };
-      });
+      if (state.blocks.length >= 10) return;
+      const sticky: TodoBlock = {
+        id: generateId(),
+        title,
+        items: [],
+        order: state.blocks.length,
+      };
+      applyLocalMutation(
+        (prev) => ({ ...prev, blocks: [...prev.blocks, sticky] }),
+        { action: "addSticky", payload: { sticky } },
+      );
     },
-    [updateState],
+    [applyLocalMutation, state.blocks.length],
   );
 
   const updateBlockTitle = useCallback(
-    (blockId: string, title: string) => {
-      updateState((prev) => ({
-        ...prev,
-        blocks: prev.blocks.map((b) =>
-          b.id === blockId ? { ...b, title } : b,
-        ),
-      }));
+    (stickyId: string, title: string) => {
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((sticky) =>
+            sticky.id === stickyId ? { ...sticky, title } : sticky,
+          ),
+        }),
+        { action: "renameSticky", payload: { stickyId, title } },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const deleteBlock = useCallback(
-    (blockId: string) => {
-      updateState((prev) => ({
-        ...prev,
-        blocks: prev.blocks
-          .filter((b) => b.id !== blockId)
-          .map((b, i) => ({ ...b, order: i })),
-      }));
+    (stickyId: string) => {
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks
+            .filter((sticky) => sticky.id !== stickyId)
+            .map((sticky, order) => ({ ...sticky, order })),
+        }),
+        { action: "deleteSticky", payload: { stickyId } },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const reorderBlocks = useCallback(
-    (newBlocks: TodoBlock[]) => {
-      updateState((prev) => ({
-        ...prev,
-        blocks: newBlocks.map((b, i) => ({ ...b, order: i })),
-      }));
+    (stickies: TodoBlock[]) => {
+      const reordered = stickies.map((sticky, order) => ({ ...sticky, order }));
+      applyLocalMutation(
+        (prev) => ({ ...prev, blocks: reordered }),
+        {
+          action: "reorderStickies",
+          payload: { stickyIds: reordered.map((sticky) => sticky.id) },
+        },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const reorderItems = useCallback(
-    (blockId: string, newItems: TodoItem[]) => {
-      updateState((prev) => ({
-        ...prev,
-        blocks: prev.blocks.map((b) => {
-          if (b.id !== blockId) return b;
-          return {
-            ...b,
-            items: newItems.map((item, i) => ({ ...item, order: i })),
-          };
+    (stickyId: string, items: TodoItem[]) => {
+      const reordered = items.map((item, order) => ({ ...item, order }));
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((sticky) =>
+            sticky.id === stickyId ? { ...sticky, items: reordered } : sticky,
+          ),
         }),
-      }));
+        {
+          action: "reorderTasks",
+          payload: { stickyId, taskIds: reordered.map((task) => task.id) },
+        },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const addItem = useCallback(
-    (blockId: string, text: string) => {
-      updateState((prev) => ({
-        ...prev,
-        blocks: prev.blocks.map((b) => {
-          if (b.id !== blockId) return b;
-          const newItem: TodoItem = {
-            id: generateId(),
-            text,
-            status: "todo",
-            createdAt: Date.now(),
-            order: b.items.length,
-          };
-          return { ...b, items: [...b.items, newItem] };
+    (stickyId: string, text: string) => {
+      const sticky = state.blocks.find((candidate) => candidate.id === stickyId);
+      if (!sticky) return;
+      const task: TodoItem = {
+        id: generateId(),
+        text,
+        status: "todo",
+        createdAt: Date.now(),
+        order: sticky.items.length,
+      };
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((candidate) =>
+            candidate.id === stickyId
+              ? { ...candidate, items: [...candidate.items, task] }
+              : candidate,
+          ),
         }),
-      }));
+        { action: "addTask", payload: { stickyId, task } },
+      );
     },
-    [updateState],
+    [applyLocalMutation, state.blocks],
   );
 
   const updateItemText = useCallback(
-    (blockId: string, itemId: string, text: string) => {
-      updateState((prev) => ({
-        ...prev,
-        blocks: prev.blocks.map((b) => {
-          if (b.id !== blockId) return b;
-          return {
-            ...b,
-            items: b.items.map((item) =>
-              item.id === itemId ? { ...item, text } : item,
-            ),
-          };
+    (stickyId: string, taskId: string, text: string) => {
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((sticky) =>
+            sticky.id === stickyId
+              ? {
+                  ...sticky,
+                  items: sticky.items.map((task) =>
+                    task.id === taskId ? { ...task, text } : task,
+                  ),
+                }
+              : sticky,
+          ),
         }),
-      }));
+        { action: "editTask", payload: { stickyId, taskId, text } },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
+  );
+
+  const setItemStatus = useCallback(
+    (stickyId: string, taskId: string, status: ItemStatus) => {
+      const order = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((sticky) =>
+            sticky.id === stickyId
+              ? {
+                  ...sticky,
+                  items: sticky.items.map((task) =>
+                    task.id === taskId ? { ...task, status, order } : task,
+                  ),
+                }
+              : sticky,
+          ),
+        }),
+        { action: "setTaskStatus", payload: { stickyId, taskId, status, order } },
+      );
+    },
+    [applyLocalMutation],
   );
 
   const toggleItemStatus = useCallback(
-    (blockId: string, itemId: string) => {
-      updateState((prev) => ({
-        ...prev,
-        blocks: prev.blocks.map((b) => {
-          if (b.id !== blockId) return b;
-          return {
-            ...b,
-            items: b.items.map((item) => {
-              if (item.id !== itemId) return item;
-              const newStatus: ItemStatus =
-                item.status === "todo" ? "completed" : "todo";
-              return { ...item, status: newStatus, order: Date.now() };
-            }),
-          };
-        }),
-      }));
+    (stickyId: string, taskId: string) => {
+      const task = state.blocks
+        .find((sticky) => sticky.id === stickyId)
+        ?.items.find((candidate) => candidate.id === taskId);
+      if (!task) return;
+      setItemStatus(stickyId, taskId, task.status === "todo" ? "completed" : "todo");
     },
-    [updateState],
+    [setItemStatus, state.blocks],
   );
 
   const softDeleteItem = useCallback(
-    (blockId: string, itemId: string) => {
-      updateState((prev) => ({
-        ...prev,
-        blocks: prev.blocks.map((b) => {
-          if (b.id !== blockId) return b;
-          return {
-            ...b,
-            items: b.items.map((item) =>
-              item.id === itemId
-                ? {
-                    ...item,
-                    status: "deleted" as ItemStatus,
-                    order: Date.now(),
-                  }
-                : item,
-            ),
-          };
-        }),
-      }));
+    (stickyId: string, taskId: string) => {
+      setItemStatus(stickyId, taskId, "deleted");
     },
-    [updateState],
+    [setItemStatus],
   );
 
   const undoDeleteItem = useCallback(
-    (blockId: string, itemId: string) => {
-      updateState((prev) => ({
-        ...prev,
-        blocks: prev.blocks.map((b) => {
-          if (b.id !== blockId) return b;
-          return {
-            ...b,
-            items: b.items.map((item) =>
-              item.id === itemId
-                ? {
-                    ...item,
-                    status: "todo" as ItemStatus,
-                    order: Date.now(),
-                  }
-                : item,
-            ),
-          };
-        }),
-      }));
+    (stickyId: string, taskId: string) => {
+      setItemStatus(stickyId, taskId, "todo");
     },
-    [updateState],
+    [setItemStatus],
   );
 
   const clearAndArchive = useCallback(() => {
-    updateState((prev) => ({
-      ...prev,
-      blocks: prev.blocks.map((b) => ({
-        ...b,
-        items: b.items.filter((item) => item.status === "todo"),
-      })),
-    }));
-  }, [updateState]);
+    applyLocalMutation(
+      (prev) => ({
+        ...prev,
+        blocks: prev.blocks.map((sticky) => ({
+          ...sticky,
+          items: sticky.items.filter((task) => task.status === "todo"),
+        })),
+      }),
+      { action: "clearArchivedTasks", payload: {} },
+    );
+  }, [applyLocalMutation]);
+
+  const clearStickyArchivedTasks = useCallback(
+    (stickyId: string) => {
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((sticky) =>
+            sticky.id === stickyId
+              ? {
+                  ...sticky,
+                  items: sticky.items.filter((task) => task.status === "todo"),
+                }
+              : sticky,
+          ),
+        }),
+        { action: "clearStickyArchivedTasks", payload: { stickyId } },
+      );
+    },
+    [applyLocalMutation],
+  );
 
   const addTextBlock = useCallback(
     (title: string, collectionId: string | null = null) => {
       const trimmed = title.trim();
-      if (!trimmed) return null;
-      if (state.textBlocks.length >= 30) return null;
+      if (!trimmed || state.textBlocks.length >= 30) return null;
 
-      const newBlock: TextBlock = {
+      const now = Date.now();
+      const memo: TextBlock = {
         id: generateId(),
         title: trimmed,
         content: "",
         collectionId,
         previousCollectionId: null,
         archivedAt: null,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        createdAt: now,
+        updatedAt: now,
         order: state.textBlocks.length,
       };
-
-      updateState((prev) => {
-        return { ...prev, textBlocks: [...prev.textBlocks, newBlock] };
-      });
-
-      return newBlock.id;
+      applyLocalMutation(
+        (prev) => ({ ...prev, textBlocks: [...prev.textBlocks, memo] }),
+        { action: "addMemo", payload: { memo } },
+      );
+      return memo.id;
     },
-    [state.textBlocks.length, updateState],
+    [applyLocalMutation, state.textBlocks.length],
   );
 
   const updateTextBlockTitle = useCallback(
-    (blockId: string, title: string) => {
-      updateState((prev) => ({
-        ...prev,
-        textBlocks: prev.textBlocks.map((block) =>
-          block.id === blockId
-            ? { ...block, title, updatedAt: Date.now() }
-            : block,
-        ),
-      }));
+    (memoId: string, title: string) => {
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          textBlocks: prev.textBlocks.map((memo) =>
+            memo.id === memoId ? { ...memo, title, updatedAt } : memo,
+          ),
+        }),
+        { action: "renameMemo", payload: { memoId, title, updatedAt } },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const updateTextBlockContent = useCallback(
-    (blockId: string, content: string) => {
-      updateState((prev) => ({
-        ...prev,
-        textBlocks: prev.textBlocks.map((block) =>
-          block.id === blockId
-            ? { ...block, content, updatedAt: Date.now() }
-            : block,
-        ),
-      }));
+    (memoId: string, content: string) => {
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          textBlocks: prev.textBlocks.map((memo) =>
+            memo.id === memoId ? { ...memo, content, updatedAt } : memo,
+          ),
+        }),
+        { action: "editMemo", payload: { memoId, content, updatedAt } },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const updateTextBlockCollection = useCallback(
-    (blockId: string, collectionId: string | null) => {
-      updateState((prev) => ({
-        ...prev,
-        textBlocks: prev.textBlocks.map((block) =>
-          block.id === blockId
-            ? {
-                ...block,
-                collectionId,
-                previousCollectionId: null,
-                archivedAt: null,
-                updatedAt: Date.now(),
-              }
-            : block,
-        ),
-      }));
+    (memoId: string, collectionId: string | null) => {
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          textBlocks: prev.textBlocks.map((memo) =>
+            memo.id === memoId
+              ? {
+                  ...memo,
+                  collectionId,
+                  previousCollectionId: null,
+                  archivedAt: null,
+                  updatedAt,
+                }
+              : memo,
+          ),
+        }),
+        { action: "moveMemo", payload: { memoId, collectionId, updatedAt } },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const archiveTextBlock = useCallback(
-    (blockId: string) => {
-      updateState((prev) => ({
-        ...prev,
-        textBlocks: prev.textBlocks.map((block) =>
-          block.id === blockId
-            ? {
-                ...block,
-                previousCollectionId:
-                  block.previousCollectionId ?? block.collectionId ?? null,
-                collectionId: null,
-                archivedAt: Date.now(),
-                updatedAt: Date.now(),
-              }
-            : block,
-        ),
-      }));
+    (memoId: string) => {
+      const archivedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          textBlocks: prev.textBlocks.map((memo) =>
+            memo.id === memoId
+              ? {
+                  ...memo,
+                  previousCollectionId:
+                    memo.previousCollectionId ?? memo.collectionId ?? null,
+                  collectionId: null,
+                  archivedAt,
+                  updatedAt: archivedAt,
+                }
+              : memo,
+          ),
+        }),
+        {
+          action: "archiveMemo",
+          payload: { memoId, archivedAt, updatedAt: archivedAt },
+        },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const restoreTextBlock = useCallback(
-    (blockId: string) => {
-      updateState((prev) => ({
-        ...prev,
-        textBlocks: prev.textBlocks.map((block) =>
-          block.id === blockId
-            ? {
-                ...block,
-                collectionId: block.previousCollectionId ?? null,
-                previousCollectionId: null,
-                archivedAt: null,
-                updatedAt: Date.now(),
-              }
-            : block,
-        ),
-      }));
+    (memoId: string) => {
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          textBlocks: prev.textBlocks.map((memo) =>
+            memo.id === memoId
+              ? {
+                  ...memo,
+                  collectionId: memo.previousCollectionId ?? null,
+                  previousCollectionId: null,
+                  archivedAt: null,
+                  updatedAt,
+                }
+              : memo,
+          ),
+        }),
+        { action: "restoreMemo", payload: { memoId, updatedAt } },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const deleteTextBlock = useCallback(
-    (blockId: string) => {
-      updateState((prev) => ({
-        ...prev,
-        textBlocks: prev.textBlocks
-          .filter((block) => block.id !== blockId)
-          .map((block, index) => ({ ...block, order: index })),
-      }));
+    (memoId: string) => {
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          textBlocks: prev.textBlocks
+            .filter((memo) => memo.id !== memoId)
+            .map((memo, order) => ({ ...memo, order })),
+        }),
+        { action: "deleteMemo", payload: { memoId } },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const addMemoCollection = useCallback(
     (title: string) => {
       const trimmed = title.trim();
       if (!trimmed) return null;
-
       const existing = state.memoCollections.find(
         (collection) =>
           collection.title.toLowerCase() === trimmed.toLowerCase(),
       );
       if (existing) return existing.id;
 
+      const now = Date.now();
       const collection: MemoCollection = {
         id: generateId(),
         title: trimmed,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        createdAt: now,
+        updatedAt: now,
         order: state.memoCollections.length,
       };
-
-      updateState((prev) => ({
-        ...prev,
-        memoCollections: [...prev.memoCollections, collection],
-      }));
-
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          memoCollections: [...prev.memoCollections, collection],
+        }),
+        { action: "addMemoCollection", payload: { collection } },
+      );
       return collection.id;
     },
-    [state.memoCollections, updateState],
+    [applyLocalMutation, state.memoCollections],
   );
 
   const updateMemoCollectionTitle = useCallback(
     (collectionId: string, title: string) => {
       const trimmed = title.trim();
       if (!trimmed) return;
-
-      updateState((prev) => ({
-        ...prev,
-        memoCollections: prev.memoCollections.map((collection) =>
-          collection.id === collectionId
-            ? { ...collection, title: trimmed, updatedAt: Date.now() }
-            : collection,
-        ),
-      }));
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          memoCollections: prev.memoCollections.map((collection) =>
+            collection.id === collectionId
+              ? { ...collection, title: trimmed, updatedAt }
+              : collection,
+          ),
+        }),
+        {
+          action: "renameMemoCollection",
+          payload: { collectionId, title: trimmed, updatedAt },
+        },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   const deleteMemoCollection = useCallback(
     (collectionId: string) => {
-      updateState((prev) => ({
-        ...prev,
-        memoCollections: prev.memoCollections.filter(
-          (collection) => collection.id !== collectionId,
-        ),
-        textBlocks: prev.textBlocks.map((block) =>
-          block.collectionId === collectionId
-            ? {
-                ...block,
-                collectionId: null,
-                previousCollectionId:
-                  block.previousCollectionId === collectionId
-                    ? null
-                    : block.previousCollectionId,
-                updatedAt: Date.now(),
-              }
-            : block,
-        ),
-      }));
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          memoCollections: prev.memoCollections
+            .filter((collection) => collection.id !== collectionId)
+            .map((collection, order) => ({ ...collection, order })),
+          textBlocks: prev.textBlocks.map((memo) =>
+            memo.collectionId === collectionId ||
+            memo.previousCollectionId === collectionId
+              ? {
+                  ...memo,
+                  collectionId:
+                    memo.collectionId === collectionId
+                      ? null
+                      : memo.collectionId,
+                  previousCollectionId:
+                    memo.previousCollectionId === collectionId
+                      ? null
+                      : memo.previousCollectionId,
+                  updatedAt: Date.now(),
+                }
+              : memo,
+          ),
+        }),
+        { action: "deleteMemoCollection", payload: { collectionId } },
+      );
     },
-    [updateState],
+    [applyLocalMutation],
   );
 
   return {
@@ -902,6 +859,7 @@ export function useTodoStore() {
     softDeleteItem,
     undoDeleteItem,
     clearAndArchive,
+    clearStickyArchivedTasks,
     addTextBlock,
     updateTextBlockTitle,
     updateTextBlockContent,

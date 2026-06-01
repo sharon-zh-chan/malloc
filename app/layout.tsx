@@ -1,19 +1,22 @@
-import React from "react"
+import React from "react";
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 
 import "./globals.css";
 
-const _inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "To Do at One Glance",
+  title: "malloc | Allocate space for what's on your mind",
   description:
-    "A sketchy hand-drawn dashboard to manage all your todo lists at one glance",
+    "A lightweight workspace for allocating space to tasks, memos and thoughts.",
+  icons: {
+    icon: "/brand/malloc-symbol.svg",
+  },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#f37520",
+  themeColor: "#0047D6",
   width: "device-width",
   initialScale: 1,
 };
@@ -25,7 +28,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="font-sans antialiased min-h-screen">{children}</body>
+      <body className={`${inter.className} min-h-screen antialiased`}>
+        {children}
+      </body>
     </html>
   );
 }

@@ -170,15 +170,6 @@ export function TextBlocksPage({
                 >
                   <FolderPlus className="h-4 w-4" />
                 </button>
-                <button
-                  type="button"
-                  onClick={handleQuickAdd}
-                  className="h-8 w-8 flex items-center justify-center rounded-full text-primary hover:bg-primary/10 transition-colors"
-                  aria-label="Add a new memo"
-                  title="Add memo"
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
               </>
             )}
           </div>

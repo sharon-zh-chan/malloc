@@ -23,23 +23,25 @@ const endpoints = [
   },
   {
     method: "GET",
-    path: "/api/app-state",
-    title: "Read app state",
-    description: "Fetch the signed-in user's current app state JSON.",
+    path: "/api/workspace",
+    title: "Hydrate workspace",
+    description: "Fetch the signed-in user's current workspace for display.",
     auth: "Requires Authorization: Bearer <access_token>.",
   },
   {
-    method: "PUT",
-    path: "/api/app-state",
-    title: "Replace app state",
-    description: "Replace the signed-in user's app state JSON.",
+    method: "POST",
+    path: "/api/mutations",
+    title: "Apply a workspace mutation",
+    description:
+      "Apply an idempotent action such as addTask, reorderStickies, editMemo, or archiveMemo.",
     auth: "Requires Authorization: Bearer <access_token>.",
   },
   {
-    method: "DELETE",
+    method: "GET / PUT / DELETE",
     path: "/api/app-state",
-    title: "Delete app state",
-    description: "Delete the signed-in user's stored app state.",
+    title: "Legacy app-state compatibility",
+    description:
+      "Read, replace, or delete the full workspace. Retained for migration and recovery; use targeted mutations for ordinary writes.",
     auth: "Requires Authorization: Bearer <access_token>.",
   },
 ];
@@ -58,8 +60,8 @@ export default function ApiDocsPage() {
             </h1>
             <p className="max-w-3xl text-base leading-7 text-[#555f68] sm:text-lg">
               Authenticate with the same email and password used in the
-              frontend, then manage the signed-in user&apos;s app state with a
-              bearer token.
+              frontend, hydrate the workspace, then preserve user intent with
+              targeted mutations.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -114,8 +116,13 @@ export default function ApiDocsPage() {
   -H 'Content-Type: application/json' \\
   -d '{"email":"user@example.com","password":"password"}'
 
-curl /api/app-state \\
-  -H 'Authorization: Bearer <access_token>'`}</code>
+curl /api/workspace \\
+  -H 'Authorization: Bearer <access_token>'
+
+curl -X POST /api/mutations \\
+  -H 'Authorization: Bearer <access_token>' \\
+  -H 'Content-Type: application/json' \\
+  -d '{"client_mutation_id":"unique-request-id","action":"addTask","payload":{"stickyId":"sticky-id","task":{"id":"task-id","text":"Ship it","status":"todo","createdAt":1767225600000,"order":0}}}'`}</code>
           </pre>
         </section>
       </section>

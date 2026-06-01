@@ -53,28 +53,52 @@ curl -X POST http://localhost:3000/api/auth/refresh \
   -d '{"refresh_token":"<refresh_token>"}'
 ```
 
-### Read app state
+### Hydrate a workspace
 
 ```bash
-curl http://localhost:3000/api/app-state \
+curl http://localhost:3000/api/workspace \
   -H 'Authorization: Bearer <access_token>'
 ```
 
-### Replace app state
+### Apply a targeted mutation
 
 ```bash
-curl -X PUT http://localhost:3000/api/app-state \
+curl -X POST http://localhost:3000/api/mutations \
   -H 'Authorization: Bearer <access_token>' \
   -H 'Content-Type: application/json' \
-  -d '{"state":{"timeRange":"","blocks":[],"textBlocks":[],"memoCollections":[],"lastUpdatedAt":0}}'
+  -d '{"client_mutation_id":"unique-request-id","action":"addTask","payload":{"stickyId":"sticky-id","task":{"id":"task-id","text":"Ship it","status":"todo","createdAt":1767225600000,"order":0}}}'
 ```
 
-### Delete app state
+Each `client_mutation_id` is an idempotency key. Supported actions include
+`addSticky`, `reorderStickies`, `addTask`, `setTaskStatus`, `reorderTasks`,
+`clearStickyArchivedTasks`,
+`addMemo`, `editMemo`, `archiveMemo`, and memo collection operations.
 
-```bash
-curl -X DELETE http://localhost:3000/api/app-state \
-  -H 'Authorization: Bearer <access_token>'
-```
+### Legacy app-state compatibility
+
+`GET`, `PUT`, and `DELETE /api/app-state` remain available for migration and
+recovery. Ordinary writes should use targeted mutations.
+
+### Database rollout
+
+Apply `scripts/003_add_action_shaped_persistence.sql` before deploying the
+RPC-based frontend. It adds and backfills the normalized tables without
+breaking the legacy frontend. After the new frontend and external helpers are
+verified, apply `scripts/004_disable_legacy_app_state_writes.sql` to disable
+direct legacy blob writes.
+
+For a safe production rollout:
+
+1. Back up or export `public.app_state`.
+2. Apply `scripts/003_add_action_shaped_persistence.sql`. It intentionally
+   preserves `public.app_state` while copying existing user data into the
+   normalized tables.
+3. Verify that existing stickies, tasks, memos, and memo collections appear for
+   signed-in users before merging or deploying the RPC-based frontend.
+4. Deploy the frontend and verify that a new task survives refresh and sign-in.
+5. Apply `scripts/004_disable_legacy_app_state_writes.sql` only after the new
+   frontend and any external helpers have been verified. Do not apply it as part
+   of the initial deployment.
 
 ## Learn More
 
