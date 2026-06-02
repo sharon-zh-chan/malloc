@@ -100,6 +100,10 @@ For a safe production rollout:
    frontend and any external helpers have been verified. Do not apply it as part
    of the initial deployment.
 
+If `scripts/003_add_action_shaped_persistence.sql` was applied before the
+mutation conflict fix, apply `scripts/005_fix_workspace_mutation_conflict.sql`
+once before testing writes.
+
 ## Learn More
 
 To learn more, take a look at the following resources:

@@ -28,6 +28,17 @@ type WorkspaceStateResponse = {
   updated_at: string | null;
 };
 
+function getSyncFailureStatus(): SyncStatus {
+  return typeof navigator !== "undefined" && !navigator.onLine
+    ? "offline"
+    : "error";
+}
+
+function reportSyncFailure(context: string, error: unknown): SyncStatus {
+  console.error(`[workspace sync] ${context}`, error);
+  return getSyncFailureStatus();
+}
+
 function generateId(): string {
   return Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
 }
@@ -38,9 +49,21 @@ function createDefaultState(): AppState {
     blocks: [
       {
         id: generateId(),
-        title: "My Tasks",
+        title: "Life Admin",
         items: [],
         order: 0,
+      },
+      {
+        id: generateId(),
+        title: "Today",
+        items: [],
+        order: 1,
+      },
+      {
+        id: generateId(),
+        title: "Shopping List",
+        items: [],
+        order: 2,
       },
     ],
     textBlocks: [],
@@ -183,7 +206,7 @@ export function useTodoStore() {
     const { data, error } = await supabase.rpc("get_workspace_state");
 
     if (error) {
-      setSyncStatus("offline");
+      setSyncStatus(reportSyncFailure("hydrate workspace", error));
       return;
     }
 
@@ -197,7 +220,9 @@ export function useTodoStore() {
       );
 
       if (replacementError) {
-        setSyncStatus("offline");
+        setSyncStatus(
+          reportSyncFailure("create initial workspace", replacementError),
+        );
         return;
       }
 
@@ -225,7 +250,7 @@ export function useTodoStore() {
   const flushMutationQueue = useCallback(async () => {
     const currentUser = userRef.current;
     const supabase = supabaseRef.current;
-    if (!currentUser || !supabase || flushingRef.current) return;
+    if (!currentUser || !supabase || flushingRef.current) return false;
 
     flushingRef.current = true;
     setSyncStatus("syncing");
@@ -246,8 +271,8 @@ export function useTodoStore() {
 
         if (error) {
           ownMutationIdsRef.current.delete(next.id);
-          setSyncStatus("offline");
-          return;
+          setSyncStatus(reportSyncFailure("apply queued mutation", error));
+          return false;
         }
 
         queueRef.current = queueRef.current.filter(
@@ -257,6 +282,7 @@ export function useTodoStore() {
       }
 
       setSyncStatus("synced");
+      return true;
     } finally {
       flushingRef.current = false;
     }
@@ -308,7 +334,9 @@ export function useTodoStore() {
 
   useEffect(() => {
     if (!hydrated || !user) return;
-    void flushMutationQueue().then(hydrateWorkspace);
+    void flushMutationQueue().then((flushed) => {
+      if (flushed) void hydrateWorkspace();
+    });
   }, [hydrated, user, flushMutationQueue, hydrateWorkspace]);
 
   useEffect(() => {
@@ -342,7 +370,9 @@ export function useTodoStore() {
             return;
           }
 
-          void flushMutationQueue().then(hydrateWorkspace);
+          void flushMutationQueue().then((flushed) => {
+            if (flushed) void hydrateWorkspace();
+          });
         },
       )
       .subscribe();
@@ -357,7 +387,9 @@ export function useTodoStore() {
 
   useEffect(() => {
     const handleOnline = () => {
-      void flushMutationQueue().then(hydrateWorkspace);
+      void flushMutationQueue().then((flushed) => {
+        if (flushed) void hydrateWorkspace();
+      });
     };
     const handleOffline = () => {
       if (userRef.current) setSyncStatus("offline");

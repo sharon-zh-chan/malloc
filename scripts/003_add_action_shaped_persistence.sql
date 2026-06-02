@@ -63,7 +63,8 @@ create table if not exists public.workspace_mutations (
   action text not null,
   payload jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  unique (user_id, client_mutation_id)
+  constraint workspace_mutations_user_id_client_mutation_id_key
+    unique (user_id, client_mutation_id)
 );
 
 create index if not exists stickies_user_sort_order_idx
@@ -616,7 +617,8 @@ begin
     user_id, client_mutation_id, action, payload
   )
   values (current_user_id, client_mutation_id, action, payload)
-  on conflict (user_id, client_mutation_id) do nothing
+  on conflict on constraint workspace_mutations_user_id_client_mutation_id_key
+    do nothing
   returning id into inserted_mutation_id;
 
   if inserted_mutation_id is null then
