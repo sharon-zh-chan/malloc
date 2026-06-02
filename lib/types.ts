@@ -43,4 +43,10 @@ export interface AppState {
   lastUpdatedAt: number;
 }
 
-export type SyncStatus = "offline" | "syncing" | "synced" | "idle" | "conflict";
+export type SyncStatus =
+  | "offline"
+  | "syncing"
+  | "synced"
+  | "idle"
+  | "error"
+  | "conflict";
