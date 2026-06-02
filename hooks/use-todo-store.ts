@@ -49,9 +49,21 @@ function createDefaultState(): AppState {
     blocks: [
       {
         id: generateId(),
-        title: "My Tasks",
+        title: "Life Admin",
         items: [],
         order: 0,
+      },
+      {
+        id: generateId(),
+        title: "Today",
+        items: [],
+        order: 1,
+      },
+      {
+        id: generateId(),
+        title: "Shopping List",
+        items: [],
+        order: 2,
       },
     ],
     textBlocks: [],
