@@ -51,6 +51,7 @@ export function Dashboard() {
     addMemoCollection,
     updateMemoCollectionTitle,
     deleteMemoCollection,
+    trackProductEvent,
   } = useTodoStore();
 
   const [activeView, setActiveView] = useState<"stickies" | "memos">(
@@ -152,7 +153,10 @@ export function Dashboard() {
               type="button"
               role="tab"
               aria-selected={activeView === "stickies"}
-              onClick={() => setActiveView("stickies")}
+              onClick={() => {
+                setActiveView("stickies");
+                void trackProductEvent("view_switched", { view: "stickies" });
+              }}
               className={`border-r border-foreground px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
                 activeView === "stickies"
                   ? "bg-primary text-primary-foreground"
@@ -165,7 +169,10 @@ export function Dashboard() {
               type="button"
               role="tab"
               aria-selected={activeView === "memos"}
-              onClick={() => setActiveView("memos")}
+              onClick={() => {
+                setActiveView("memos");
+                void trackProductEvent("view_switched", { view: "memos" });
+              }}
               className={`border-r border-foreground px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
                 activeView === "memos"
                   ? "bg-primary text-primary-foreground"
