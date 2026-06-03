@@ -93,6 +93,13 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
     setConfirmPassword("");
   };
 
+  const closeAuthDialog = () => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    setOpen(false);
+  };
+
   const authCallbackUrl = (next?: string) => {
     const callback = new URL("/auth/callback", window.location.origin);
     if (next) callback.searchParams.set("next", next);
@@ -105,11 +112,13 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
     if (mode !== "reset-password" && !email.trim()) return;
     if (mode !== "forgot-password" && !password) return;
 
+    const authMode = mode;
+
     setLoading(true);
     setError("");
     setMessage("");
 
-    if (mode === "signup") {
+    if (authMode === "signup") {
       if (!passwordMeetsRules) {
         setLoading(false);
         setError("Use at least 8 characters and include a number.");
@@ -122,6 +131,8 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
         return;
       }
 
+      closeAuthDialog();
+
       const { data, error: authError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
@@ -132,6 +143,7 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
 
       setLoading(false);
       if (authError) {
+        setOpen(true);
         setError(authError.message);
       } else if (data.session) {
         setEmail("");
@@ -144,13 +156,14 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
         onAuthChange();
       } else {
         setMode("login");
+        setOpen(true);
         setMessage(
           "Account created. You can log in once Supabase has finished setting up your account.",
         );
         setPassword("");
         setConfirmPassword("");
       }
-    } else if (mode === "forgot-password") {
+    } else if (authMode === "forgot-password") {
       const { error: authError } = await supabase.auth.resetPasswordForEmail(
         email.trim(),
         {
@@ -166,7 +179,7 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
         setPassword("");
         setConfirmPassword("");
       }
-    } else if (mode === "reset-password") {
+    } else if (authMode === "reset-password") {
       if (!passwordMeetsRules) {
         setLoading(false);
         setError("Use at least 8 characters and include a number.");
@@ -179,21 +192,25 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
         return;
       }
 
+      closeAuthDialog();
+
       const { error: authError } = await supabase.auth.updateUser({
         password,
       });
 
       setLoading(false);
       if (authError) {
+        setOpen(true);
         setError(authError.message);
       } else {
         setPassword("");
         setConfirmPassword("");
         setMessage("");
-        setOpen(false);
         onAuthChange();
       }
     } else {
+      closeAuthDialog();
+
       const { error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
@@ -201,13 +218,13 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
 
       setLoading(false);
       if (authError) {
+        setOpen(true);
         setError(authError.message);
       } else {
         setEmail("");
         setPassword("");
         setConfirmPassword("");
         setMessage("");
-        setOpen(false);
         onAuthChange();
       }
     }
