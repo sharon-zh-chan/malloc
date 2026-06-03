@@ -37,11 +37,11 @@ const endpoints = [
     auth: "Requires Authorization: Bearer <access_token>.",
   },
   {
-    method: "GET / PUT / DELETE",
+    method: "GET",
     path: "/api/app-state",
-    title: "Legacy app-state compatibility",
+    title: "Legacy app-state read",
     description:
-      "Read, replace, or delete the full workspace. Retained for migration and recovery; use targeted mutations for ordinary writes.",
+      "Read the full workspace for compatibility and migration verification. Full-state writes are disabled.",
     auth: "Requires Authorization: Bearer <access_token>.",
   },
 ];

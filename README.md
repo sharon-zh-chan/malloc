@@ -76,8 +76,9 @@ Each `client_mutation_id` is an idempotency key. Supported actions include
 
 ### Legacy app-state compatibility
 
-`GET`, `PUT`, and `DELETE /api/app-state` remain available for migration and
-recovery. Ordinary writes should use targeted mutations.
+`GET /api/app-state` remains available for migration verification. Full-state
+REST writes are disabled; ordinary writes must use targeted mutations through
+`POST /api/mutations`.
 
 ### Database rollout
 
@@ -96,9 +97,10 @@ For a safe production rollout:
 3. Verify that existing stickies, tasks, memos, and memo collections appear for
    signed-in users before merging or deploying the RPC-based frontend.
 4. Deploy the frontend and verify that a new task survives refresh and sign-in.
-5. Apply `scripts/004_disable_legacy_app_state_writes.sql` only after the new
-   frontend and any external helpers have been verified. Do not apply it as part
-   of the initial deployment.
+5. Apply `scripts/004_disable_legacy_app_state_writes.sql` after the new
+   frontend and any external helpers are using targeted mutations. It revokes
+   direct legacy table writes and direct execution of the full replacement and
+   deletion RPCs.
 
 If `scripts/003_add_action_shaped_persistence.sql` was applied before the
 mutation conflict fix, apply `scripts/005_fix_workspace_mutation_conflict.sql`

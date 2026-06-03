@@ -47,51 +47,22 @@ export async function GET(request: Request) {
   });
 }
 
-export async function PUT(request: Request) {
-  const auth = await getAuthenticatedClient(request);
-
-  if ("error" in auth) {
-    return NextResponse.json({ error: auth.error }, { status: auth.status });
-  }
-
-  const body = await request.json().catch(() => null);
-  const result = z.object({ state: appStateSchema }).safeParse(body);
-
-  if (!result.success) {
-    return NextResponse.json(
-      { error: "Expected a valid app state object under the state key" },
-      { status: 400 },
-    );
-  }
-
-  const state = normalizeState(result.data.state);
-  const { data, error } = await auth.supabase.rpc("replace_workspace_state", {
-    replacement_state: state,
-  });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json({
-    state: normalizeState(data.state),
-    updated_at: data.updated_at,
-    version: null,
-  });
+export async function PUT() {
+  return NextResponse.json(
+    {
+      error:
+        "Full app-state replacement is disabled. Use POST /api/mutations for scoped writes.",
+    },
+    { status: 410 },
+  );
 }
 
-export async function DELETE(request: Request) {
-  const auth = await getAuthenticatedClient(request);
-
-  if ("error" in auth) {
-    return NextResponse.json({ error: auth.error }, { status: auth.status });
-  }
-
-  const { error } = await auth.supabase.rpc("delete_workspace");
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return new NextResponse(null, { status: 204 });
+export async function DELETE() {
+  return NextResponse.json(
+    {
+      error:
+        "Legacy full-workspace deletion is disabled. Use scoped workspace mutations.",
+    },
+    { status: 410 },
+  );
 }

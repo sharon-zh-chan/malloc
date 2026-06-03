@@ -23,7 +23,7 @@ export function createOpenApiSpec(baseUrl: string) {
       },
       {
         name: "Compatibility",
-        description: "Legacy full-state endpoints for migration and recovery only.",
+        description: "Legacy read-only state endpoint for migration verification.",
       },
     ],
     paths: {
@@ -86,7 +86,7 @@ export function createOpenApiSpec(baseUrl: string) {
       "/api/app-state": {
         get: {
           tags: ["Compatibility"],
-          summary: "Read app state (compatibility)",
+          summary: "Read app state (read-only compatibility)",
           operationId: "getAppState",
           security: [{ bearerAuth: [] }],
           responses: {
@@ -98,46 +98,6 @@ export function createOpenApiSpec(baseUrl: string) {
                 },
               },
             },
-            "401": { $ref: "#/components/responses/Unauthorized" },
-            "500": { $ref: "#/components/responses/InternalServerError" },
-            "503": { $ref: "#/components/responses/ServiceUnavailable" },
-          },
-        },
-        put: {
-          tags: ["Compatibility"],
-          summary: "Replace app state (compatibility)",
-          operationId: "replaceAppState",
-          security: [{ bearerAuth: [] }],
-          requestBody: {
-            required: true,
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/ReplaceAppStateRequest" },
-              },
-            },
-          },
-          responses: {
-            "200": {
-              description: "The saved app state.",
-              content: {
-                "application/json": {
-                  schema: { $ref: "#/components/schemas/AppStateResponse" },
-                },
-              },
-            },
-            "400": { $ref: "#/components/responses/BadRequest" },
-            "401": { $ref: "#/components/responses/Unauthorized" },
-            "500": { $ref: "#/components/responses/InternalServerError" },
-            "503": { $ref: "#/components/responses/ServiceUnavailable" },
-          },
-        },
-        delete: {
-          tags: ["Compatibility"],
-          summary: "Delete app state (compatibility)",
-          operationId: "deleteAppState",
-          security: [{ bearerAuth: [] }],
-          responses: {
-            "204": { description: "The user's app state was deleted." },
             "401": { $ref: "#/components/responses/Unauthorized" },
             "500": { $ref: "#/components/responses/InternalServerError" },
             "503": { $ref: "#/components/responses/ServiceUnavailable" },
@@ -348,11 +308,6 @@ export function createOpenApiSpec(baseUrl: string) {
               description: "Action-specific payload. See the human-readable API docs for examples.",
             },
           },
-        },
-        ReplaceAppStateRequest: {
-          type: "object",
-          required: ["state"],
-          properties: { state: { $ref: "#/components/schemas/AppState" } },
         },
         AppState: {
           type: "object",

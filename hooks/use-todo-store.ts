@@ -51,6 +51,8 @@ type WorkspaceStateResponse = {
   updated_at: string | null;
 };
 
+type TodoSupabaseClient = NonNullable<ReturnType<typeof createClient>>;
+
 function getSyncFailureStatus(): SyncStatus {
   return typeof navigator !== "undefined" && !navigator.onLine
     ? "offline"
@@ -165,6 +167,81 @@ function saveMutationQueue(queue: QueuedMutation[]) {
   }
 }
 
+async function applyInitialWorkspaceMutation(
+  supabase: TodoSupabaseClient,
+  mutation: WorkspaceMutation,
+) {
+  const { data, error } = await supabase.rpc("apply_workspace_mutation", {
+    client_mutation_id: generateId(),
+    action: mutation.action,
+    payload: mutation.payload,
+  });
+
+  if (error) throw error;
+
+  return data as WorkspaceStateResponse;
+}
+
+async function createInitialWorkspace(
+  supabase: TodoSupabaseClient,
+  state: AppState,
+) {
+  let response = await applyInitialWorkspaceMutation(supabase, {
+    action: "setTimeRange",
+    payload: { timeRange: state.timeRange },
+  });
+
+  for (const block of state.blocks) {
+    response = await applyInitialWorkspaceMutation(supabase, {
+      action: "addSticky",
+      payload: {
+        sticky: {
+          id: block.id,
+          title: block.title,
+          order: block.order,
+        },
+      },
+    });
+
+    for (const task of block.items) {
+      response = await applyInitialWorkspaceMutation(supabase, {
+        action: "addTask",
+        payload: {
+          stickyId: block.id,
+          task,
+        },
+      });
+    }
+  }
+
+  for (const collection of state.memoCollections) {
+    response = await applyInitialWorkspaceMutation(supabase, {
+      action: "addMemoCollection",
+      payload: { collection },
+    });
+  }
+
+  for (const memo of state.textBlocks) {
+    response = await applyInitialWorkspaceMutation(supabase, {
+      action: "addMemo",
+      payload: { memo },
+    });
+
+    if (memo.archivedAt) {
+      response = await applyInitialWorkspaceMutation(supabase, {
+        action: "archiveMemo",
+        payload: {
+          memoId: memo.id,
+          archivedAt: memo.archivedAt,
+          updatedAt: memo.updatedAt,
+        },
+      });
+    }
+  }
+
+  return response;
+}
+
 function mutationQueueKey(mutation: WorkspaceMutation): string | null {
   switch (mutation.action) {
     case "setTimeRange":
@@ -242,24 +319,22 @@ export function useTodoStore() {
     const currentState = stateRef.current;
 
     if (!response.state) {
-      const { data: replacement, error: replacementError } = await supabase.rpc(
-        "replace_workspace_state",
-        { replacement_state: currentState },
-      );
-
-      if (replacementError) {
-        setSyncStatus(
-          reportSyncFailure("create initial workspace", replacementError),
+      try {
+        const initialWorkspace = await createInitialWorkspace(
+          supabase,
+          currentState,
         );
-        return;
+        const nextState = migrateAppState(
+          initialWorkspace.state ?? currentState,
+        );
+        setState(nextState);
+        saveLocalState(nextState);
+        setSyncStatus("synced");
+      } catch (error) {
+        setSyncStatus(
+          reportSyncFailure("create initial workspace", error),
+        );
       }
-
-      const nextState = migrateAppState(
-        (replacement as WorkspaceStateResponse).state ?? currentState,
-      );
-      setState(nextState);
-      saveLocalState(nextState);
-      setSyncStatus("synced");
       return;
     }
 

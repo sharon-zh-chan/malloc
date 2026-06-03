@@ -1009,8 +1009,6 @@ revoke all on function public.delete_workspace() from public;
 revoke all on function public.apply_workspace_mutation(text, text, jsonb) from public;
 
 grant execute on function public.get_workspace_state() to authenticated;
-grant execute on function public.replace_workspace_state(jsonb) to authenticated;
-grant execute on function public.delete_workspace() to authenticated;
 grant execute on function public.apply_workspace_mutation(text, text, jsonb) to authenticated;
 
 do $$
