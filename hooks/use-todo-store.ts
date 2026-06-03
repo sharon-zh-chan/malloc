@@ -12,6 +12,10 @@ import type {
 } from "@/lib/types";
 import type { WorkspaceMutation } from "@/lib/api/workspace-mutations";
 import { createClient } from "@/lib/supabase/client";
+import {
+  hasPasswordRecoveryMarker,
+  markPasswordRecoveryPending,
+} from "@/lib/auth-recovery";
 import type { User, RealtimeChannel } from "@supabase/supabase-js";
 
 const STORAGE_KEY = "todo-at-one-glance";
@@ -420,13 +424,21 @@ export function useTodoStore() {
     const supabase = supabaseRef.current;
     if (!supabase) return;
 
+    if (hasPasswordRecoveryMarker(window.location.search, window.location.hash)) {
+      markPasswordRecoveryPending();
+    }
+
     void supabase.auth.getUser().then(({ data: { user: currentUser } }) => {
       setUser(currentUser ?? null);
     });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        markPasswordRecoveryPending();
+      }
+
       setUser(session?.user ?? null);
     });
 

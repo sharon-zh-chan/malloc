@@ -7,6 +7,11 @@ import type { User } from "@supabase/supabase-js";
 import type { SyncStatus } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
+  consumePasswordRecoveryPending,
+  hasPasswordRecoveryMarker,
+  markPasswordRecoveryPending,
+} from "@/lib/auth-recovery";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -65,6 +70,9 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
     const authError = searchParams.get("auth_error");
     const hasPendingSignupSuccess =
       window.sessionStorage.getItem(SIGNUP_SUCCESS_KEY) === "true";
+    const hasRecovery =
+      hasPasswordRecoveryMarker(window.location.search, window.location.hash) ||
+      consumePasswordRecoveryPending();
 
     if (hasPendingSignupSuccess) {
       window.sessionStorage.removeItem(SIGNUP_SUCCESS_KEY);
@@ -73,7 +81,7 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
       return;
     }
 
-    if (authMode === "reset-password") {
+    if (hasRecovery || authMode === "reset-password") {
       setMode("reset-password");
       setOpen(true);
       window.history.replaceState({}, "", window.location.pathname);
@@ -84,6 +92,32 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
+
+  useEffect(() => {
+    if (!authEnabled) return;
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event !== "PASSWORD_RECOVERY") return;
+
+      markPasswordRecoveryPending();
+      setMode("reset-password");
+      setOpen(true);
+      setError("");
+      setMessage("");
+      setPassword("");
+      setConfirmPassword("");
+      window.history.replaceState({}, "", window.location.pathname);
+      window.setTimeout(() => {
+        consumePasswordRecoveryPending();
+      }, 0);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [authEnabled, supabase]);
 
   const resetForm = (nextMode: AuthMode = "login") => {
     setMode(nextMode);
