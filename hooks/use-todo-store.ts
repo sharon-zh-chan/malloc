@@ -16,6 +16,29 @@ import type { User, RealtimeChannel } from "@supabase/supabase-js";
 
 const STORAGE_KEY = "todo-at-one-glance";
 const MUTATION_QUEUE_KEY = "todo-at-one-glance-pending-mutations";
+const ANALYTICS_HEARTBEAT_MS = 30_000;
+
+type AnalyticsEventName =
+  | "session_started"
+  | "view_switched"
+  | "sticky_created"
+  | "sticky_deleted"
+  | "stickies_reordered"
+  | "task_created"
+  | "task_completed"
+  | "task_deleted"
+  | "task_restored"
+  | "tasks_reordered"
+  | "archived_tasks_cleared"
+  | "memo_created"
+  | "memo_moved"
+  | "memo_archived"
+  | "memo_restored"
+  | "memo_deleted"
+  | "memo_collection_created"
+  | "memo_collection_deleted";
+
+type AnalyticsProperties = Record<string, string | number | boolean | null>;
 
 type QueuedMutation = {
   id: string;
@@ -37,6 +60,10 @@ function getSyncFailureStatus(): SyncStatus {
 function reportSyncFailure(context: string, error: unknown): SyncStatus {
   console.error(`[workspace sync] ${context}`, error);
   return getSyncFailureStatus();
+}
+
+function reportAnalyticsFailure(context: string, error: unknown) {
+  console.warn(`[analytics] ${context}`, error);
 }
 
 function generateId(): string {
@@ -176,6 +203,7 @@ export function useTodoStore() {
   const queueRef = useRef<QueuedMutation[]>([]);
   const flushingRef = useRef(false);
   const ownMutationIdsRef = useRef(new Set<string>());
+  const analyticsSessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     stateRef.current = state;
@@ -420,6 +448,116 @@ export function useTodoStore() {
     [enqueueMutation, updateState],
   );
 
+  const trackProductEvent = useCallback(
+    async (
+      eventName: AnalyticsEventName,
+      properties: AnalyticsProperties = {},
+    ) => {
+      const currentUser = userRef.current;
+      const supabase = supabaseRef.current;
+      if (!currentUser || !supabase) return;
+
+      const { error } = await supabase.from("analytics_events").insert({
+        user_id: currentUser.id,
+        session_id: analyticsSessionIdRef.current,
+        event_name: eventName,
+        properties,
+      });
+
+      if (error) {
+        reportAnalyticsFailure(`track ${eventName}`, error);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const supabase = supabaseRef.current;
+    if (!hydrated || !user || !supabase) return;
+
+    let stopped = false;
+    let sessionId: string | null = null;
+
+    const touchSession = async (ended = false) => {
+      if (!sessionId) return;
+
+      const timestamp = new Date().toISOString();
+      const update = ended
+        ? { last_seen_at: timestamp, ended_at: timestamp }
+        : { last_seen_at: timestamp };
+
+      const { error } = await supabase
+        .from("analytics_sessions")
+        .update(update)
+        .eq("id", sessionId)
+        .eq("user_id", user.id);
+
+      if (error) {
+        reportAnalyticsFailure("update session", error);
+      }
+    };
+
+    const startSession = async () => {
+      const newSessionId = crypto.randomUUID();
+      const { error } = await supabase
+        .from("analytics_sessions")
+        .insert({ id: newSessionId, user_id: user.id });
+
+      if (error) {
+        reportAnalyticsFailure("start session", error);
+        return;
+      }
+
+      sessionId = newSessionId;
+
+      if (stopped) {
+        await touchSession(true);
+        return;
+      }
+
+      analyticsSessionIdRef.current = sessionId;
+
+      const { error: eventError } = await supabase
+        .from("analytics_events")
+        .insert({
+          user_id: user.id,
+          session_id: sessionId,
+          event_name: "session_started",
+          properties: {
+            stickies_count: stateRef.current.blocks.length,
+            memos_count: stateRef.current.textBlocks.length,
+            memo_collections_count: stateRef.current.memoCollections.length,
+          },
+        });
+
+      if (eventError) {
+        reportAnalyticsFailure("track session_started", eventError);
+      }
+    };
+
+    void startSession();
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void touchSession();
+      }
+    }, ANALYTICS_HEARTBEAT_MS);
+
+    const handleVisibilityChange = () => {
+      void touchSession();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      void touchSession(true);
+      analyticsSessionIdRef.current = null;
+    };
+  }, [hydrated, user?.id]);
+
   const setTimeRange = useCallback(
     (timeRange: string) => {
       applyLocalMutation(
@@ -443,8 +581,11 @@ export function useTodoStore() {
         (prev) => ({ ...prev, blocks: [...prev.blocks, sticky] }),
         { action: "addSticky", payload: { sticky } },
       );
+      void trackProductEvent("sticky_created", {
+        stickies_count_after: state.blocks.length + 1,
+      });
     },
-    [applyLocalMutation, state.blocks.length],
+    [applyLocalMutation, state.blocks.length, trackProductEvent],
   );
 
   const updateBlockTitle = useCallback(
@@ -473,8 +614,11 @@ export function useTodoStore() {
         }),
         { action: "deleteSticky", payload: { stickyId } },
       );
+      void trackProductEvent("sticky_deleted", {
+        stickies_count_after: Math.max(state.blocks.length - 1, 0),
+      });
     },
-    [applyLocalMutation],
+    [applyLocalMutation, state.blocks.length, trackProductEvent],
   );
 
   const reorderBlocks = useCallback(
@@ -487,8 +631,11 @@ export function useTodoStore() {
           payload: { stickyIds: reordered.map((sticky) => sticky.id) },
         },
       );
+      void trackProductEvent("stickies_reordered", {
+        stickies_count: reordered.length,
+      });
     },
-    [applyLocalMutation],
+    [applyLocalMutation, trackProductEvent],
   );
 
   const reorderItems = useCallback(
@@ -506,8 +653,11 @@ export function useTodoStore() {
           payload: { stickyId, taskIds: reordered.map((task) => task.id) },
         },
       );
+      void trackProductEvent("tasks_reordered", {
+        tasks_count: reordered.length,
+      });
     },
-    [applyLocalMutation],
+    [applyLocalMutation, trackProductEvent],
   );
 
   const addItem = useCallback(
@@ -532,8 +682,11 @@ export function useTodoStore() {
         }),
         { action: "addTask", payload: { stickyId, task } },
       );
+      void trackProductEvent("task_created", {
+        tasks_count_after: sticky.items.length + 1,
+      });
     },
-    [applyLocalMutation, state.blocks],
+    [applyLocalMutation, state.blocks, trackProductEvent],
   );
 
   const updateItemText = useCallback(
@@ -577,8 +730,15 @@ export function useTodoStore() {
         }),
         { action: "setTaskStatus", payload: { stickyId, taskId, status, order } },
       );
+      const eventName =
+        status === "completed"
+          ? "task_completed"
+          : status === "deleted"
+            ? "task_deleted"
+            : "task_restored";
+      void trackProductEvent(eventName, { status });
     },
-    [applyLocalMutation],
+    [applyLocalMutation, trackProductEvent],
   );
 
   const toggleItemStatus = useCallback(
@@ -607,6 +767,11 @@ export function useTodoStore() {
   );
 
   const clearAndArchive = useCallback(() => {
+    const archivedCount = state.blocks.reduce(
+      (count, sticky) =>
+        count + sticky.items.filter((task) => task.status !== "todo").length,
+      0,
+    );
     applyLocalMutation(
       (prev) => ({
         ...prev,
@@ -617,10 +782,17 @@ export function useTodoStore() {
       }),
       { action: "clearArchivedTasks", payload: {} },
     );
-  }, [applyLocalMutation]);
+    void trackProductEvent("archived_tasks_cleared", {
+      scope: "workspace",
+      tasks_cleared: archivedCount,
+    });
+  }, [applyLocalMutation, state.blocks, trackProductEvent]);
 
   const clearStickyArchivedTasks = useCallback(
     (stickyId: string) => {
+      const sticky = state.blocks.find((candidate) => candidate.id === stickyId);
+      const archivedCount =
+        sticky?.items.filter((task) => task.status !== "todo").length ?? 0;
       applyLocalMutation(
         (prev) => ({
           ...prev,
@@ -635,8 +807,12 @@ export function useTodoStore() {
         }),
         { action: "clearStickyArchivedTasks", payload: { stickyId } },
       );
+      void trackProductEvent("archived_tasks_cleared", {
+        scope: "sticky",
+        tasks_cleared: archivedCount,
+      });
     },
-    [applyLocalMutation],
+    [applyLocalMutation, state.blocks, trackProductEvent],
   );
 
   const addTextBlock = useCallback(
@@ -660,9 +836,13 @@ export function useTodoStore() {
         (prev) => ({ ...prev, textBlocks: [...prev.textBlocks, memo] }),
         { action: "addMemo", payload: { memo } },
       );
+      void trackProductEvent("memo_created", {
+        memos_count_after: state.textBlocks.length + 1,
+        has_collection: Boolean(collectionId),
+      });
       return memo.id;
     },
-    [applyLocalMutation, state.textBlocks.length],
+    [applyLocalMutation, state.textBlocks.length, trackProductEvent],
   );
 
   const updateTextBlockTitle = useCallback(
@@ -717,8 +897,11 @@ export function useTodoStore() {
         }),
         { action: "moveMemo", payload: { memoId, collectionId, updatedAt } },
       );
+      void trackProductEvent("memo_moved", {
+        has_collection: Boolean(collectionId),
+      });
     },
-    [applyLocalMutation],
+    [applyLocalMutation, trackProductEvent],
   );
 
   const archiveTextBlock = useCallback(
@@ -745,8 +928,9 @@ export function useTodoStore() {
           payload: { memoId, archivedAt, updatedAt: archivedAt },
         },
       );
+      void trackProductEvent("memo_archived");
     },
-    [applyLocalMutation],
+    [applyLocalMutation, trackProductEvent],
   );
 
   const restoreTextBlock = useCallback(
@@ -769,8 +953,9 @@ export function useTodoStore() {
         }),
         { action: "restoreMemo", payload: { memoId, updatedAt } },
       );
+      void trackProductEvent("memo_restored");
     },
-    [applyLocalMutation],
+    [applyLocalMutation, trackProductEvent],
   );
 
   const deleteTextBlock = useCallback(
@@ -784,8 +969,11 @@ export function useTodoStore() {
         }),
         { action: "deleteMemo", payload: { memoId } },
       );
+      void trackProductEvent("memo_deleted", {
+        memos_count_after: Math.max(state.textBlocks.length - 1, 0),
+      });
     },
-    [applyLocalMutation],
+    [applyLocalMutation, state.textBlocks.length, trackProductEvent],
   );
 
   const addMemoCollection = useCallback(
@@ -813,9 +1001,12 @@ export function useTodoStore() {
         }),
         { action: "addMemoCollection", payload: { collection } },
       );
+      void trackProductEvent("memo_collection_created", {
+        memo_collections_count_after: state.memoCollections.length + 1,
+      });
       return collection.id;
     },
-    [applyLocalMutation, state.memoCollections],
+    [applyLocalMutation, state.memoCollections, trackProductEvent],
   );
 
   const updateMemoCollectionTitle = useCallback(
@@ -869,8 +1060,14 @@ export function useTodoStore() {
         }),
         { action: "deleteMemoCollection", payload: { collectionId } },
       );
+      void trackProductEvent("memo_collection_deleted", {
+        memo_collections_count_after: Math.max(
+          state.memoCollections.length - 1,
+          0,
+        ),
+      });
     },
-    [applyLocalMutation],
+    [applyLocalMutation, state.memoCollections.length, trackProductEvent],
   );
 
   return {
@@ -902,5 +1099,6 @@ export function useTodoStore() {
     addMemoCollection,
     updateMemoCollectionTitle,
     deleteMemoCollection,
+    trackProductEvent,
   };
 }
