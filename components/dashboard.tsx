@@ -5,6 +5,7 @@ import { useTodoStore } from "@/hooks/use-todo-store";
 import { TodoBlockCard } from "./todo-block";
 import { GlobalButtons } from "./global-buttons";
 import { AuthBar } from "./auth-bar";
+import { AuthScreen } from "./auth-screen";
 import { TextBlocksPage } from "./text-blocks-page";
 import {
   DndContext,
@@ -26,9 +27,11 @@ export function Dashboard() {
   const {
     state,
     hydrated,
+    authResolved,
     user,
     syncStatus,
     onAuthChange,
+    clearLocalWorkspace,
     addBlock,
     updateBlockTitle,
     deleteBlock,
@@ -106,7 +109,7 @@ export function Dashboard() {
     }
   };
 
-  if (!hydrated) {
+  if (!hydrated || !authResolved) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-muted-foreground animate-pulse">
@@ -121,6 +124,10 @@ export function Dashboard() {
     );
   }
 
+  if (!user) {
+    return <AuthScreen onAuthChange={onAuthChange} />;
+  }
+
   return (
     <div className="min-h-screen pb-8">
       <header className="border-b brand-rule bg-card px-4 py-4 md:px-8">
@@ -133,10 +140,11 @@ export function Dashboard() {
           <div className="flex-shrink-0 w-full sm:w-auto">
             {/* Discard any password-manager DOM additions with the signed-out form. */}
             <AuthBar
-              key={user?.id ?? "signed-out"}
+              key={user.id}
               user={user}
               syncStatus={syncStatus}
               onAuthChange={onAuthChange}
+              onLogout={clearLocalWorkspace}
             />
           </div>
         </div>

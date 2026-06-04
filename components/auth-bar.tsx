@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { createClient, hasSupabaseConfig } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import type { SyncStatus } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { ConfirmModal } from "@/components/confirm-modal";
 import {
   consumePasswordRecoveryPending,
   hasPasswordRecoveryMarker,
@@ -35,6 +36,11 @@ interface AuthBarProps {
   user: User | null;
   syncStatus: SyncStatus;
   onAuthChange: () => void;
+  onLogout: () => void;
+  renderSignedOut?: (actions: {
+    openLogin: () => void;
+    openSignup: () => void;
+  }) => ReactNode;
 }
 
 type AuthMode =
@@ -48,8 +54,15 @@ const SIGNUP_SUCCESS_KEY = "malloc_signup_success_pending";
 const PASSWORD_RESET_SUCCESS_KEY = "malloc_password_reset_success_pending";
 const PASSWORD_RESET_EMAIL_KEY = "malloc_password_reset_email";
 
-export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
+export function AuthBar({
+  user,
+  syncStatus,
+  onAuthChange,
+  onLogout,
+  renderSignedOut,
+}: AuthBarProps) {
   const [open, setOpen] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -295,10 +308,23 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
     }
   };
 
-  const handleLogout = async () => {
+  const openLogin = () => {
+    resetForm("login");
+    setOpen(true);
+  };
+
+  const openSignup = () => {
+    resetForm("signup");
+    setOpen(true);
+  };
+
+  const confirmLogout = async () => {
     if (!authEnabled) return;
+    setShowLogoutConfirm(false);
+    onLogout();
     await supabase.auth.signOut();
     onAuthChange();
+    window.location.assign("/logged-out");
   };
 
   const syncIcon = () => {
@@ -550,7 +576,7 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
           </span>
           <button
             type="button"
-            onClick={handleLogout}
+            onClick={() => setShowLogoutConfirm(true)}
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             aria-label="Log out"
           >
@@ -559,6 +585,14 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
           </button>
         </div>
         {authDialog}
+        <ConfirmModal
+          open={showLogoutConfirm}
+          title="Log out?"
+          message="Are you sure you want to log out?"
+          confirmLabel="Log out"
+          onConfirm={confirmLogout}
+          onCancel={() => setShowLogoutConfirm(false)}
+        />
       </>
     );
   }
@@ -571,33 +605,31 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
 
   return (
     <>
-      <div className="flex items-center justify-end gap-2">
-        <Button
-          type="button"
-          size="sm"
-          onClick={() => {
-            resetForm("login");
-            setOpen(true);
-          }}
-          className="h-8 rounded-none px-3 text-xs"
-        >
-          <KeyRound className="h-3.5 w-3.5" />
-          Log in
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            resetForm("signup");
-            setOpen(true);
-          }}
-          className="h-8 rounded-none px-3 text-xs"
-        >
-          <UserPlus className="h-3.5 w-3.5" />
-          Sign up
-        </Button>
-      </div>
+      {renderSignedOut ? (
+        renderSignedOut({ openLogin, openSignup })
+      ) : (
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            size="sm"
+            onClick={openLogin}
+            className="h-8 rounded-none px-3 text-xs"
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+            Log in
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={openSignup}
+            className="h-8 rounded-none px-3 text-xs"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Sign up
+          </Button>
+        </div>
+      )}
 
       {authDialog}
     </>
