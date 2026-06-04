@@ -45,6 +45,8 @@ type AuthMode =
   | "reset-password";
 
 const SIGNUP_SUCCESS_KEY = "malloc_signup_success_pending";
+const PASSWORD_RESET_SUCCESS_KEY = "malloc_password_reset_success_pending";
+const PASSWORD_RESET_EMAIL_KEY = "malloc_password_reset_email";
 
 export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
   const [open, setOpen] = useState(false);
@@ -70,9 +72,26 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
     const authError = searchParams.get("auth_error");
     const hasPendingSignupSuccess =
       window.sessionStorage.getItem(SIGNUP_SUCCESS_KEY) === "true";
+    const hasPendingPasswordResetSuccess =
+      window.sessionStorage.getItem(PASSWORD_RESET_SUCCESS_KEY) === "true";
     const hasRecovery =
       hasPasswordRecoveryMarker(window.location.search, window.location.hash) ||
       consumePasswordRecoveryPending();
+
+    if (hasPendingPasswordResetSuccess) {
+      const resetEmail =
+        window.sessionStorage.getItem(PASSWORD_RESET_EMAIL_KEY) ?? "";
+      window.sessionStorage.removeItem(PASSWORD_RESET_SUCCESS_KEY);
+      window.sessionStorage.removeItem(PASSWORD_RESET_EMAIL_KEY);
+      setEmail(resetEmail);
+      setMode("login");
+      setOpen(true);
+      setMessage(
+        "Password reset. Log in with your new password to reopen your workspace.",
+      );
+      window.history.replaceState({}, "", window.location.pathname);
+      return;
+    }
 
     if (hasPendingSignupSuccess) {
       window.sessionStorage.removeItem(SIGNUP_SUCCESS_KEY);
@@ -237,9 +256,21 @@ export function AuthBar({ user, syncStatus, onAuthChange }: AuthBarProps) {
         setOpen(true);
         setError(authError.message);
       } else {
+        const resetEmail = user?.email ?? "";
+        window.sessionStorage.setItem(PASSWORD_RESET_SUCCESS_KEY, "true");
+        if (resetEmail) {
+          window.sessionStorage.setItem(PASSWORD_RESET_EMAIL_KEY, resetEmail);
+        }
+
+        await supabase.auth.signOut();
         setPassword("");
         setConfirmPassword("");
-        setMessage("");
+        setEmail(resetEmail);
+        setMode("login");
+        setOpen(true);
+        setMessage(
+          "Password reset. Log in with your new password to reopen your workspace.",
+        );
         onAuthChange();
       }
     } else {
