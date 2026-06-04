@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { createClient, hasSupabaseConfig } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import type { SyncStatus } from "@/lib/types";
@@ -64,6 +65,7 @@ export function AuthBar({
   onLogoutStart,
   renderSignedOut,
 }: AuthBarProps) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [email, setEmail] = useState("");
@@ -329,7 +331,7 @@ export function AuthBar({
     onLogout();
     await supabase.auth.signOut();
     onAuthChange();
-    window.location.replace("/logged-out");
+    router.replace("/logged-out");
   };
 
   const syncIcon = () => {

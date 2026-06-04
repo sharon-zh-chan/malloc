@@ -5,10 +5,17 @@ import { AuthBar } from "./auth-bar";
 
 const LOGOUT_REDIRECT_KEY = "malloc_logout_redirect_pending";
 
-export function LoggedOutScreen() {
+interface LoggedOutScreenProps {
+  clearLogoutRedirect?: boolean;
+}
+
+export function LoggedOutScreen({
+  clearLogoutRedirect = true,
+}: LoggedOutScreenProps) {
   useEffect(() => {
+    if (!clearLogoutRedirect) return;
     window.sessionStorage.removeItem(LOGOUT_REDIRECT_KEY);
-  }, []);
+  }, [clearLogoutRedirect]);
 
   const returnToWorkspace = () => {
     window.location.assign("/");

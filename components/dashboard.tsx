@@ -6,6 +6,7 @@ import { TodoBlockCard } from "./todo-block";
 import { GlobalButtons } from "./global-buttons";
 import { AuthBar } from "./auth-bar";
 import { AuthScreen } from "./auth-screen";
+import { LoggedOutScreen } from "./logged-out-screen";
 import { TextBlocksPage } from "./text-blocks-page";
 import {
   DndContext,
@@ -135,7 +136,11 @@ export function Dashboard() {
     }
   };
 
-  if (logoutRedirecting || !hydrated || !authResolved) {
+  if (logoutRedirecting) {
+    return <LoggedOutScreen clearLogoutRedirect={false} />;
+  }
+
+  if (!hydrated || !authResolved) {
     return <LoadingWorkspace />;
   }
 
