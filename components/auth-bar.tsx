@@ -37,6 +37,7 @@ interface AuthBarProps {
   syncStatus: SyncStatus;
   onAuthChange: () => void;
   onLogout: () => void;
+  onLogoutStart?: () => void;
   renderSignedOut?: (actions: {
     openLogin: () => void;
     openSignup: () => void;
@@ -60,6 +61,7 @@ export function AuthBar({
   syncStatus,
   onAuthChange,
   onLogout,
+  onLogoutStart,
   renderSignedOut,
 }: AuthBarProps) {
   const [open, setOpen] = useState(false);
@@ -321,8 +323,9 @@ export function AuthBar({
 
   const confirmLogout = async () => {
     if (!authEnabled) return;
-    setShowLogoutConfirm(false);
     window.sessionStorage.setItem(LOGOUT_REDIRECT_KEY, "true");
+    onLogoutStart?.();
+    setShowLogoutConfirm(false);
     onLogout();
     await supabase.auth.signOut();
     onAuthChange();

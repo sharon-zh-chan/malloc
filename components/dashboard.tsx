@@ -88,6 +88,7 @@ export function Dashboard() {
   const [selectedTextBlockId, setSelectedTextBlockId] = useState<string | null>(
     null,
   );
+  const [logoutRedirecting, setLogoutRedirecting] = useState(false);
   // Drag and drop sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -134,7 +135,7 @@ export function Dashboard() {
     }
   };
 
-  if (!hydrated || !authResolved) {
+  if (logoutRedirecting || !hydrated || !authResolved) {
     return <LoadingWorkspace />;
   }
 
@@ -163,6 +164,7 @@ export function Dashboard() {
               syncStatus={syncStatus}
               onAuthChange={onAuthChange}
               onLogout={clearLocalWorkspace}
+              onLogoutStart={() => setLogoutRedirecting(true)}
             />
           </div>
         </div>
