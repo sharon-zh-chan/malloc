@@ -1,8 +1,15 @@
 "use client";
 
+import { useEffect } from "react";
 import { AuthBar } from "./auth-bar";
 
+const LOGOUT_REDIRECT_KEY = "malloc_logout_redirect_pending";
+
 export function LoggedOutScreen() {
+  useEffect(() => {
+    window.sessionStorage.removeItem(LOGOUT_REDIRECT_KEY);
+  }, []);
+
   const returnToWorkspace = () => {
     window.location.assign("/");
   };

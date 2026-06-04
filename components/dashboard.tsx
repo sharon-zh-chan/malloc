@@ -23,6 +23,31 @@ import {
   rectSortingStrategy,
 } from "@dnd-kit/sortable";
 
+const LOGOUT_REDIRECT_KEY = "malloc_logout_redirect_pending";
+
+function LoadingWorkspace() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4 text-muted-foreground animate-pulse">
+        <img
+          src="/brand/malloc-symbol.svg"
+          alt=""
+          className="h-12 w-12"
+        />
+        <span className="brand-label">Allocating workspace</span>
+      </div>
+    </div>
+  );
+}
+
+function LogoutRedirect() {
+  useEffect(() => {
+    window.location.replace("/logged-out");
+  }, []);
+
+  return <LoadingWorkspace />;
+}
+
 export function Dashboard() {
   const {
     state,
@@ -110,21 +135,14 @@ export function Dashboard() {
   };
 
   if (!hydrated || !authResolved) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4 text-muted-foreground animate-pulse">
-          <img
-            src="/brand/malloc-symbol.svg"
-            alt=""
-            className="h-12 w-12"
-          />
-          <span className="brand-label">Allocating workspace</span>
-        </div>
-      </div>
-    );
+    return <LoadingWorkspace />;
   }
 
   if (!user) {
+    if (window.sessionStorage.getItem(LOGOUT_REDIRECT_KEY) === "true") {
+      return <LogoutRedirect />;
+    }
+
     return <AuthScreen onAuthChange={onAuthChange} />;
   }
 

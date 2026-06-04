@@ -53,6 +53,7 @@ type AuthMode =
 const SIGNUP_SUCCESS_KEY = "malloc_signup_success_pending";
 const PASSWORD_RESET_SUCCESS_KEY = "malloc_password_reset_success_pending";
 const PASSWORD_RESET_EMAIL_KEY = "malloc_password_reset_email";
+const LOGOUT_REDIRECT_KEY = "malloc_logout_redirect_pending";
 
 export function AuthBar({
   user,
@@ -321,10 +322,11 @@ export function AuthBar({
   const confirmLogout = async () => {
     if (!authEnabled) return;
     setShowLogoutConfirm(false);
+    window.sessionStorage.setItem(LOGOUT_REDIRECT_KEY, "true");
     onLogout();
     await supabase.auth.signOut();
     onAuthChange();
-    window.location.assign("/logged-out");
+    window.location.replace("/logged-out");
   };
 
   const syncIcon = () => {
