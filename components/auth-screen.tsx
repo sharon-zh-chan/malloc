@@ -35,23 +35,22 @@ export function AuthScreen({ onAuthChange }: AuthScreenProps) {
               onLogout={() => {}}
               renderSignedOut={({ openLogin, openSignup }) => (
                 <p className="mt-6 max-w-xl text-base leading-7 text-muted-foreground">
-                  Click here to{" "}
+                  <button
+                    type="button"
+                    onClick={openSignup}
+                    className="font-semibold text-primary underline-offset-4 transition-colors hover:text-primary/80 hover:underline"
+                  >
+                    Sign up
+                  </button>{" "}
+                  to get started, or{" "}
                   <button
                     type="button"
                     onClick={openLogin}
                     className="font-semibold text-primary underline-offset-4 transition-colors hover:text-primary/80 hover:underline"
                   >
                     log in
-                  </button>
-                  , and if you are new,{" "}
-                  <button
-                    type="button"
-                    onClick={openSignup}
-                    className="font-semibold text-primary underline-offset-4 transition-colors hover:text-primary/80 hover:underline"
-                  >
-                    sign up
                   </button>{" "}
-                  here.
+                  to continue.
                 </p>
               )}
             />
