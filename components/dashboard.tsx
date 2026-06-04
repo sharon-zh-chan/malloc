@@ -146,7 +146,7 @@ export function Dashboard() {
   }
 
   if (user && !workspaceReady) {
-    return <LoadingWorkspace />;
+    return <AuthScreen onAuthChange={onAuthChange} />;
   }
 
   if (!user) {

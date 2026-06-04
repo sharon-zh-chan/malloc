@@ -287,6 +287,7 @@ export function useTodoStore() {
   const flushingRef = useRef(false);
   const ownMutationIdsRef = useRef(new Set<string>());
   const analyticsSessionIdRef = useRef<string | null>(null);
+  const authRequestRef = useRef(0);
 
   useEffect(() => {
     stateRef.current = state;
@@ -436,6 +437,32 @@ export function useTodoStore() {
     setSyncStatus("idle");
   }, []);
 
+  const resolveAuthUser = useCallback(
+    async (currentUser: User | null) => {
+      const requestId = ++authRequestRef.current;
+      setWorkspaceReady(false);
+
+      if (!currentUser) {
+        userRef.current = null;
+        setUser(null);
+        setAuthResolved(true);
+        return;
+      }
+
+      userRef.current = currentUser;
+      const flushed = await flushMutationQueue();
+      if (requestId !== authRequestRef.current) return;
+
+      const ready = flushed ? await hydrateWorkspace() : false;
+      if (requestId !== authRequestRef.current) return;
+
+      setUser(currentUser);
+      setWorkspaceReady(ready);
+      setAuthResolved(true);
+    },
+    [flushMutationQueue, hydrateWorkspace],
+  );
+
   useEffect(() => {
     const supabase = supabaseRef.current;
     if (!supabase) {
@@ -444,14 +471,14 @@ export function useTodoStore() {
       return;
     }
 
+    if (!hydrated) return;
+
     if (hasPasswordRecoveryMarker(window.location.search, window.location.hash)) {
       markPasswordRecoveryPending();
     }
 
     void supabase.auth.getUser().then(({ data: { user: currentUser } }) => {
-      setWorkspaceReady(false);
-      setUser(currentUser ?? null);
-      setAuthResolved(true);
+      void resolveAuthUser(currentUser ?? null);
     });
 
     const {
@@ -461,15 +488,13 @@ export function useTodoStore() {
         markPasswordRecoveryPending();
       }
 
-      setWorkspaceReady(false);
-      setUser(session?.user ?? null);
-      setAuthResolved(true);
+      void resolveAuthUser(session?.user ?? null);
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [hydrated, resolveAuthUser]);
 
   useEffect(() => {
     if (!authResolved || user) return;
@@ -478,14 +503,14 @@ export function useTodoStore() {
   }, [authResolved, clearLocalWorkspace, user]);
 
   useEffect(() => {
-    if (!hydrated || !user) return;
+    if (!hydrated || !user || workspaceReady) return;
     void flushMutationQueue().then((flushed) => {
       if (!flushed) return;
       void hydrateWorkspace().then((ready) => {
         if (ready) setWorkspaceReady(true);
       });
     });
-  }, [hydrated, user, flushMutationQueue, hydrateWorkspace]);
+  }, [hydrated, user, workspaceReady, flushMutationQueue, hydrateWorkspace]);
 
   useEffect(() => {
     const supabase = supabaseRef.current;
