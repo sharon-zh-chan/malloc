@@ -275,6 +275,7 @@ export function useTodoStore() {
   const [state, setState] = useState<AppState>(() => createDefaultState());
   const [hydrated, setHydrated] = useState(false);
   const [authResolved, setAuthResolved] = useState(false);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
 
@@ -310,14 +311,14 @@ export function useTodoStore() {
   const hydrateWorkspace = useCallback(async () => {
     const currentUser = userRef.current;
     const supabase = supabaseRef.current;
-    if (!currentUser || !supabase) return;
+    if (!currentUser || !supabase) return false;
 
     setSyncStatus("syncing");
     const { data, error } = await supabase.rpc("get_workspace_state");
 
     if (error) {
       setSyncStatus(reportSyncFailure("hydrate workspace", error));
-      return;
+      return false;
     }
 
     const response = data as WorkspaceStateResponse;
@@ -335,12 +336,13 @@ export function useTodoStore() {
         setState(nextState);
         saveLocalState(nextState);
         setSyncStatus("synced");
+        return true;
       } catch (error) {
         setSyncStatus(
           reportSyncFailure("create initial workspace", error),
         );
+        return false;
       }
-      return;
     }
 
     const remoteState = migrateAppState(response.state);
@@ -353,6 +355,7 @@ export function useTodoStore() {
     saveLocalState(nextState);
 
     setSyncStatus("synced");
+    return true;
   }, []);
 
   const flushMutationQueue = useCallback(async () => {
@@ -422,6 +425,7 @@ export function useTodoStore() {
   );
 
   const clearLocalWorkspace = useCallback(() => {
+    setWorkspaceReady(false);
     queueRef.current = [];
     ownMutationIdsRef.current.clear();
     saveMutationQueue([]);
@@ -436,6 +440,7 @@ export function useTodoStore() {
     const supabase = supabaseRef.current;
     if (!supabase) {
       setAuthResolved(true);
+      setWorkspaceReady(true);
       return;
     }
 
@@ -444,6 +449,7 @@ export function useTodoStore() {
     }
 
     void supabase.auth.getUser().then(({ data: { user: currentUser } }) => {
+      setWorkspaceReady(false);
       setUser(currentUser ?? null);
       setAuthResolved(true);
     });
@@ -455,6 +461,7 @@ export function useTodoStore() {
         markPasswordRecoveryPending();
       }
 
+      setWorkspaceReady(false);
       setUser(session?.user ?? null);
       setAuthResolved(true);
     });
@@ -467,12 +474,16 @@ export function useTodoStore() {
   useEffect(() => {
     if (!authResolved || user) return;
     clearLocalWorkspace();
+    setWorkspaceReady(true);
   }, [authResolved, clearLocalWorkspace, user]);
 
   useEffect(() => {
     if (!hydrated || !user) return;
     void flushMutationQueue().then((flushed) => {
-      if (flushed) void hydrateWorkspace();
+      if (!flushed) return;
+      void hydrateWorkspace().then((ready) => {
+        if (ready) setWorkspaceReady(true);
+      });
     });
   }, [hydrated, user, flushMutationQueue, hydrateWorkspace]);
 
@@ -1183,6 +1194,7 @@ export function useTodoStore() {
     state,
     hydrated,
     authResolved,
+    workspaceReady,
     user,
     syncStatus,
     onAuthChange,

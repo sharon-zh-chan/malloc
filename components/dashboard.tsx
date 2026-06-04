@@ -54,6 +54,7 @@ export function Dashboard() {
     state,
     hydrated,
     authResolved,
+    workspaceReady,
     user,
     syncStatus,
     onAuthChange,
@@ -141,6 +142,10 @@ export function Dashboard() {
   }
 
   if (!hydrated || !authResolved) {
+    return <LoadingWorkspace />;
+  }
+
+  if (user && !workspaceReady) {
     return <LoadingWorkspace />;
   }
 
