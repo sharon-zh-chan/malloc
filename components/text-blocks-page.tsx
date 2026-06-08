@@ -93,9 +93,25 @@ export function TextBlocksPage({
     (block) => !block.collectionId || !collectionIds.has(block.collectionId),
   );
 
+  const handleAddMemoToGroup = (
+    collectionId: string | null,
+    collectionKey: string,
+  ) => {
+    const newBlockId = onAddBlock(DEFAULT_BLOCK_TITLE, collectionId);
+    if (!newBlockId) return;
+
+    onSelectBlock(newBlockId);
+    setCollapsedCollectionKeys((current) => {
+      if (!current.has(collectionKey)) return current;
+
+      const next = new Set(current);
+      next.delete(collectionKey);
+      return next;
+    });
+  };
+
   const handleQuickAdd = () => {
-    const newBlockId = onAddBlock(DEFAULT_BLOCK_TITLE, null);
-    if (newBlockId) onSelectBlock(newBlockId);
+    handleAddMemoToGroup(null, UNFILED_COLLECTION_KEY);
   };
 
   const handleAddCollection = () => {
@@ -228,6 +244,9 @@ export function TextBlocksPage({
                 onArchiveBlock={onArchiveBlock}
                 onRestoreBlock={onRestoreBlock}
                 onRequestDelete={setMemoPendingDelete}
+                onAddMemo={() =>
+                  handleAddMemoToGroup(null, UNFILED_COLLECTION_KEY)
+                }
                 draggedMemoId={draggedMemoId}
               />
 
@@ -256,6 +275,9 @@ export function TextBlocksPage({
                   onRestoreBlock={onRestoreBlock}
                   onRequestDelete={setMemoPendingDelete}
                   onUpdateCollectionTitle={onUpdateCollectionTitle}
+                  onAddMemo={() =>
+                    handleAddMemoToGroup(collection.id, collection.id)
+                  }
                   onDeleteCollection={onDeleteCollection}
                   draggedMemoId={draggedMemoId}
                 />
@@ -363,6 +385,7 @@ interface CollectionGroupProps {
   onRequestDelete: (block: TextBlock) => void;
   draggedMemoId: string | null;
   onUpdateCollectionTitle?: (collectionId: string, title: string) => void;
+  onAddMemo?: () => void;
   onDeleteCollection?: (collectionId: string) => void;
   archived?: boolean;
 }
@@ -386,6 +409,7 @@ function CollectionGroup({
   onRequestDelete,
   draggedMemoId,
   onUpdateCollectionTitle,
+  onAddMemo,
   onDeleteCollection,
   archived = false,
 }: CollectionGroupProps) {
@@ -467,24 +491,39 @@ function CollectionGroup({
           </button>
         )}
 
-        {collectionId && !editing && (
-          <div className="flex items-center opacity-0 transition-opacity group-hover:opacity-100">
-            <button
-              type="button"
-              onClick={() => setEditing(true)}
-              className="h-6 w-6 flex items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-foreground"
-              aria-label={`Rename ${title}`}
-            >
-              <Pencil className="h-3 w-3" />
-            </button>
-            <button
-              type="button"
-              onClick={() => onDeleteCollection?.(collectionId)}
-              className="h-6 w-6 flex items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-              aria-label={`Delete ${title}`}
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
+        {(onAddMemo || collectionId) && !editing && (
+          <div className="flex items-center opacity-70 transition-opacity group-hover:opacity-100">
+            {onAddMemo && (
+              <button
+                type="button"
+                onClick={onAddMemo}
+                className="h-6 w-6 flex items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-foreground"
+                aria-label={`Add memo to ${title}`}
+                title="Add memo"
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            )}
+            {collectionId && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  className="h-6 w-6 flex items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-foreground"
+                  aria-label={`Rename ${title}`}
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDeleteCollection?.(collectionId)}
+                  className="h-6 w-6 flex items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={`Delete ${title}`}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </>
+            )}
           </div>
         )}
         {editing && (
