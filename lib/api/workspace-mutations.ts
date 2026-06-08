@@ -46,6 +46,7 @@ export const workspaceMutationActionSchema = z.enum([
   "addTask",
   "editTask",
   "setTaskStatus",
+  "moveTask",
   "reorderTasks",
   "clearArchivedTasks",
   "clearStickyArchivedTasks",
@@ -96,6 +97,15 @@ export const workspaceMutationSchema = z.discriminatedUnion("action", [
       stickyId: id,
       taskId: id,
       status: z.enum(["todo", "completed", "deleted"]),
+      order: z.number().int(),
+    }),
+  }),
+  z.object({
+    action: z.literal("moveTask"),
+    payload: z.object({
+      fromStickyId: id,
+      toStickyId: id,
+      taskId: id,
       order: z.number().int(),
     }),
   }),

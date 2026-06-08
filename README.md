@@ -70,8 +70,8 @@ curl -X POST http://localhost:3000/api/mutations \
 ```
 
 Each `client_mutation_id` is an idempotency key. Supported actions include
-`addSticky`, `reorderStickies`, `addTask`, `setTaskStatus`, `reorderTasks`,
-`clearStickyArchivedTasks`,
+`addSticky`, `reorderStickies`, `addTask`, `setTaskStatus`, `moveTask`,
+`reorderTasks`, `clearStickyArchivedTasks`,
 `addMemo`, `editMemo`, `archiveMemo`, and memo collection operations.
 
 ### Legacy app-state compatibility

@@ -10,6 +10,7 @@ import { CSS } from "@dnd-kit/utilities";
 
 interface TodoItemProps {
   item: TodoItemType;
+  stickyId: string;
   onToggle: () => void;
   onDelete: () => void;
   onUndo: () => void;
@@ -18,6 +19,7 @@ interface TodoItemProps {
 
 export function TodoItemRow({
   item,
+  stickyId,
   onToggle,
   onDelete,
   onUndo,
@@ -34,7 +36,10 @@ export function TodoItemRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: item.id, disabled: item.status !== "todo" });
+  } = useSortable({
+    id: item.id,
+    data: { type: "task", stickyId, status: item.status },
+  });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -70,7 +75,20 @@ export function TodoItemRow({
 
   if (item.status === "deleted") {
     return (
-      <div className="flex items-center gap-2 py-1.5 px-2 rounded-md group opacity-50">
+      <div
+        ref={setNodeRef}
+        style={style}
+        className="flex items-center gap-2 py-1.5 px-2 rounded-md group opacity-50"
+      >
+        <button
+          {...attributes}
+          {...listeners}
+          className="flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing touch-none opacity-0 group-hover:opacity-100 transition-opacity"
+          aria-label="Drag to move task"
+          title="Drag to move task"
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
         <span className="line-through text-sm text-muted-foreground flex-1">
           {item.text}
         </span>
@@ -92,17 +110,15 @@ export function TodoItemRow({
       style={style}
       className="flex items-center gap-2 py-1.5 px-2 rounded-md group hover:bg-card/80 transition-colors"
     >
-      {/* Drag handle - only for todo items */}
-      {item.status === "todo" && (
-        <button
-          {...attributes}
-          {...listeners}
-          className="flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing touch-none opacity-0 group-hover:opacity-100 transition-opacity"
-          aria-label="Drag to reorder task"
-        >
-          <GripVertical className="h-4 w-4" />
-        </button>
-      )}
+      <button
+        {...attributes}
+        {...listeners}
+        className="flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing touch-none opacity-0 group-hover:opacity-100 transition-opacity"
+        aria-label="Drag to move task"
+        title="Drag to move task"
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
 
       <button
         onClick={onToggle}
