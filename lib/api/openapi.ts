@@ -288,6 +288,7 @@ export function createOpenApiSpec(baseUrl: string) {
                 "addTask",
                 "editTask",
                 "setTaskStatus",
+                "moveTask",
                 "reorderTasks",
                 "clearArchivedTasks",
                 "clearStickyArchivedTasks",

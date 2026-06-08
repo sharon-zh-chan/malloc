@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useMemo } from "react";
-import type { TodoBlock as TodoBlockType, TodoItem } from "@/lib/types";
+import type { TodoBlock as TodoBlockType } from "@/lib/types";
 import { TodoItemRow } from "./todo-item";
 import {
   Plus,
@@ -10,23 +10,12 @@ import {
   BrushCleaning,
   Trash2,
 } from "lucide-react";
-import { useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
+  useSortable,
   SortableContext,
-  sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { ConfirmModal } from "./confirm-modal";
 
 interface TodoBlockProps {
@@ -39,11 +28,11 @@ interface TodoBlockProps {
   onDeleteItem: (itemId: string) => void;
   onUndoItem: (itemId: string) => void;
   onUpdateItemText: (itemId: string, text: string) => void;
-  onReorderItems: (newItems: TodoItem[]) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
   onDeleteBlock: () => void;
   onClearTasks: () => void;
+  isTaskDropTarget: boolean;
 }
 
 export function TodoBlockCard({
@@ -56,11 +45,11 @@ export function TodoBlockCard({
   onDeleteItem,
   onUndoItem,
   onUpdateItemText,
-  onReorderItems,
   onMoveUp,
   onMoveDown,
   onDeleteBlock,
   onClearTasks,
+  isTaskDropTarget,
 }: TodoBlockProps) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleText, setTitleText] = useState(block.title);
@@ -71,18 +60,6 @@ export function TodoBlockCard({
   const titleInputRef = useRef<HTMLInputElement>(null);
   const newItemRef = useRef<HTMLInputElement>(null);
 
-  // Sensors for item drag-and-drop (within this block only)
-  const itemSensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
-
   const {
     attributes,
     listeners,
@@ -90,7 +67,7 @@ export function TodoBlockCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: block.id });
+  } = useSortable({ id: block.id, data: { type: "sticky", stickyId: block.id } });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -143,26 +120,14 @@ export function TodoBlockCard({
     return { todo, completed, deleted };
   }, [block.items]);
 
-  const handleItemDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-
-    if (over && active.id !== over.id) {
-      const todoItems = groupedItems.todo;
-      const oldIndex = todoItems.findIndex((item) => item.id === active.id);
-      const newIndex = todoItems.findIndex((item) => item.id === over.id);
-
-      if (oldIndex !== -1 && newIndex !== -1) {
-        const reorderedTodo = arrayMove(todoItems, oldIndex, newIndex);
-        // Combine reordered todo items with completed and deleted items
-        const newItems = [
-          ...reorderedTodo,
-          ...groupedItems.completed,
-          ...groupedItems.deleted,
-        ];
-        onReorderItems(newItems);
-      }
-    }
-  };
+  const renderedItemIds = useMemo(
+    () => [
+      ...groupedItems.todo,
+      ...groupedItems.completed,
+      ...groupedItems.deleted,
+    ].map((item) => item.id),
+    [groupedItems],
+  );
 
   const hasCompleted = groupedItems.completed.length > 0;
   const hasDeleted = groupedItems.deleted.length > 0;
@@ -172,7 +137,9 @@ export function TodoBlockCard({
     <div
       ref={setNodeRef}
       style={style}
-      className="sketchy-card p-4"
+      className={`sketchy-card p-4 transition-colors ${
+        isTaskDropTarget ? "bg-primary/10 ring-2 ring-primary/30" : ""
+      }`}
     >
       {/* Block Header */}
       <div className="mb-3 flex items-center gap-2 border-b border-border pb-3 transition-colors hover:border-primary">
@@ -286,85 +253,78 @@ export function TodoBlockCard({
       )}
 
       {/* Items list */}
-      <div className="flex flex-col gap-0.5">
-        {/* Todo items - draggable */}
-        <DndContext
-          sensors={itemSensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleItemDragEnd}
-        >
-          <SortableContext
-            items={groupedItems.todo.map((item) => item.id)}
-            strategy={verticalListSortingStrategy}
-          >
-            {groupedItems.todo.map((item) => (
-              <TodoItemRow
-                key={item.id}
-                item={item}
-                onToggle={() => onToggleItem(item.id)}
-                onDelete={() => onDeleteItem(item.id)}
-                onUndo={() => onUndoItem(item.id)}
-                onUpdateText={(text) => onUpdateItemText(item.id, text)}
-              />
-            ))}
-          </SortableContext>
-        </DndContext>
+      <SortableContext
+        items={renderedItemIds}
+        strategy={verticalListSortingStrategy}
+      >
+        <div className="flex flex-col gap-0.5">
+          {/* Todo items - draggable */}
+          {groupedItems.todo.map((item) => (
+            <TodoItemRow
+              key={item.id}
+              item={item}
+              stickyId={block.id}
+              onToggle={() => onToggleItem(item.id)}
+              onDelete={() => onDeleteItem(item.id)}
+              onUndo={() => onUndoItem(item.id)}
+              onUpdateText={(text) => onUpdateItemText(item.id, text)}
+            />
+          ))}
 
-        {/* Gap between todo and completed */}
-        {hasCompleted && groupedItems.todo.length > 0 && (
-          <div className="h-3" aria-hidden="true" />
-        )}
+          {/* Gap between todo and completed */}
+          {hasCompleted && groupedItems.todo.length > 0 && (
+            <div className="h-3" aria-hidden="true" />
+          )}
 
-        {/* Completed items */}
-        {hasCompleted && (
-          <div className="flex flex-col gap-0.5">
-            <p className="brand-label px-2 pb-1">
-              Completed
+          {/* Completed items */}
+          {hasCompleted && (
+            <div className="flex flex-col gap-0.5">
+              <p className="brand-label px-2 pb-1">Completed</p>
+              {groupedItems.completed.map((item) => (
+                <TodoItemRow
+                  key={item.id}
+                  item={item}
+                  stickyId={block.id}
+                  onToggle={() => onToggleItem(item.id)}
+                  onDelete={() => onDeleteItem(item.id)}
+                  onUndo={() => onUndoItem(item.id)}
+                  onUpdateText={(text) => onUpdateItemText(item.id, text)}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Gap between completed and deleted */}
+          {hasDeleted && (hasCompleted || groupedItems.todo.length > 0) && (
+            <div className="h-3" aria-hidden="true" />
+          )}
+
+          {/* Deleted items */}
+          {hasDeleted && (
+            <div className="flex flex-col gap-0.5">
+              <p className="brand-label px-2 pb-1">Deleted</p>
+              {groupedItems.deleted.map((item) => (
+                <TodoItemRow
+                  key={item.id}
+                  item={item}
+                  stickyId={block.id}
+                  onToggle={() => onToggleItem(item.id)}
+                  onDelete={() => onDeleteItem(item.id)}
+                  onUndo={() => onUndoItem(item.id)}
+                  onUpdateText={(text) => onUpdateItemText(item.id, text)}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {block.items.length === 0 && !showAddInput && (
+            <p className="text-sm text-muted-foreground italic text-center py-4">
+              No tasks yet. Click + to add one.
             </p>
-            {groupedItems.completed.map((item) => (
-              <TodoItemRow
-                key={item.id}
-                item={item}
-                onToggle={() => onToggleItem(item.id)}
-                onDelete={() => onDeleteItem(item.id)}
-                onUndo={() => onUndoItem(item.id)}
-                onUpdateText={(text) => onUpdateItemText(item.id, text)}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Gap between completed and deleted */}
-        {hasDeleted && (hasCompleted || groupedItems.todo.length > 0) && (
-          <div className="h-3" aria-hidden="true" />
-        )}
-
-        {/* Deleted items */}
-        {hasDeleted && (
-          <div className="flex flex-col gap-0.5">
-            <p className="brand-label px-2 pb-1">
-              Deleted
-            </p>
-            {groupedItems.deleted.map((item) => (
-              <TodoItemRow
-                key={item.id}
-                item={item}
-                onToggle={() => onToggleItem(item.id)}
-                onDelete={() => onDeleteItem(item.id)}
-                onUndo={() => onUndoItem(item.id)}
-                onUpdateText={(text) => onUpdateItemText(item.id, text)}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Empty state */}
-        {block.items.length === 0 && !showAddInput && (
-          <p className="text-sm text-muted-foreground italic text-center py-4">
-            No tasks yet. Click + to add one.
-          </p>
-        )}
-      </div>
+          )}
+        </div>
+      </SortableContext>
       <ConfirmModal
         open={showCleanupConfirm}
         title="Clear completed and deleted tasks?"

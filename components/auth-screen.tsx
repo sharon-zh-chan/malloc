@@ -4,9 +4,13 @@ import { AuthBar } from "./auth-bar";
 
 interface AuthScreenProps {
   onAuthChange: () => void;
+  onStartLocalPreview?: () => void;
 }
 
-export function AuthScreen({ onAuthChange }: AuthScreenProps) {
+export function AuthScreen({
+  onAuthChange,
+  onStartLocalPreview,
+}: AuthScreenProps) {
   return (
     <main className="min-h-screen bg-background">
       <div className="flex min-h-screen flex-col">
@@ -54,6 +58,15 @@ export function AuthScreen({ onAuthChange }: AuthScreenProps) {
                 </p>
               )}
             />
+            {onStartLocalPreview && (
+              <button
+                type="button"
+                onClick={onStartLocalPreview}
+                className="mt-5 inline-flex border border-foreground bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+              >
+                Open local workspace
+              </button>
+            )}
             <p className="mt-8 text-base text-foreground">Enjoy!</p>
           </div>
         </section>

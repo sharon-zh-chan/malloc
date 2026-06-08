@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useTodoStore } from "@/hooks/use-todo-store";
+import type { TodoItem } from "@/lib/types";
 import { TodoBlockCard } from "./todo-block";
 import { GlobalButtons } from "./global-buttons";
 import { AuthBar } from "./auth-bar";
@@ -16,6 +17,8 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import {
   arrayMove,
@@ -25,6 +28,28 @@ import {
 } from "@dnd-kit/sortable";
 
 const LOGOUT_REDIRECT_KEY = "malloc_logout_redirect_pending";
+
+type DragData = {
+  type?: "sticky" | "task";
+  stickyId?: string;
+  status?: TodoItem["status"];
+};
+
+const taskStatuses = ["todo", "completed", "deleted"] as const;
+
+function getGroupedTasks(items: TodoItem[]) {
+  return {
+    todo: items
+      .filter((item) => item.status === "todo")
+      .sort((a, b) => a.order - b.order),
+    completed: items
+      .filter((item) => item.status === "completed")
+      .sort((a, b) => a.order - b.order),
+    deleted: items
+      .filter((item) => item.status === "deleted")
+      .sort((a, b) => a.order - b.order),
+  };
+}
 
 function LoadingWorkspace() {
   return <div className="min-h-screen bg-background" aria-hidden="true" />;
@@ -53,6 +78,7 @@ export function Dashboard() {
     deleteBlock,
     reorderBlocks,
     reorderItems,
+    moveItem,
     addItem,
     updateItemText,
     toggleItemStatus,
@@ -80,6 +106,10 @@ export function Dashboard() {
     null,
   );
   const [logoutRedirecting, setLogoutRedirecting] = useState(false);
+  const [taskDropTargetStickyId, setTaskDropTargetStickyId] = useState<
+    string | null
+  >(null);
+  const [localPreviewEnabled, setLocalPreviewEnabled] = useState(false);
   // Drag and drop sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -112,12 +142,93 @@ export function Dashboard() {
     reorderBlocks(newBlocks);
   };
 
+  const getStickyIdFromDragTarget = (
+    target: DragEndEvent["over"] | DragOverEvent["over"],
+  ) => {
+    if (!target) return null;
+
+    const data = target.data.current as DragData | undefined;
+    if (data?.stickyId) return data.stickyId;
+
+    const targetId = String(target.id);
+    return state.blocks.some((block) => block.id === targetId)
+      ? targetId
+      : null;
+  };
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const data = event.active.data.current as DragData | undefined;
+    if (data?.type === "task") {
+      setTaskDropTargetStickyId(null);
+    }
+  };
+
+  const handleDragOver = (event: DragOverEvent) => {
+    const data = event.active.data.current as DragData | undefined;
+    if (data?.type !== "task" || !data.stickyId) return;
+
+    const targetStickyId = getStickyIdFromDragTarget(event.over);
+    setTaskDropTargetStickyId(
+      targetStickyId && targetStickyId !== data.stickyId
+        ? targetStickyId
+        : null,
+    );
+  };
+
+  const handleTaskDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    const activeData = active.data.current as DragData | undefined;
+    const fromStickyId = activeData?.stickyId;
+    const toStickyId = getStickyIdFromDragTarget(over);
+    const taskId = String(active.id);
+
+    if (!fromStickyId || !toStickyId || !over) return;
+
+    if (fromStickyId !== toStickyId) {
+      moveItem(fromStickyId, toStickyId, taskId);
+      return;
+    }
+
+    const overData = over.data.current as DragData | undefined;
+    if (overData?.type !== "task" || active.id === over.id) return;
+
+    const sticky = state.blocks.find((block) => block.id === fromStickyId);
+    const activeTask = sticky?.items.find((item) => item.id === taskId);
+    const overTask = sticky?.items.find((item) => item.id === String(over.id));
+
+    if (!sticky || !activeTask || !overTask) return;
+    if (activeTask.status !== overTask.status) return;
+
+    const groupedTasks = getGroupedTasks(sticky.items);
+    const statusTasks = groupedTasks[activeTask.status];
+    const oldIndex = statusTasks.findIndex((item) => item.id === taskId);
+    const newIndex = statusTasks.findIndex((item) => item.id === overTask.id);
+
+    if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
+
+    const reorderedStatusTasks = arrayMove(statusTasks, oldIndex, newIndex);
+    const newItems = taskStatuses.flatMap((status) =>
+      status === activeTask.status ? reorderedStatusTasks : groupedTasks[status],
+    );
+    reorderItems(fromStickyId, newItems);
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
+    const activeData = active.data.current as DragData | undefined;
+
+    setTaskDropTargetStickyId(null);
+
+    if (activeData?.type === "task") {
+      handleTaskDragEnd(event);
+      return;
+    }
 
     if (over && active.id !== over.id) {
-      const oldIndex = state.blocks.findIndex((b) => b.id === active.id);
-      const newIndex = state.blocks.findIndex((b) => b.id === over.id);
+      const activeStickyId = activeData?.stickyId ?? String(active.id);
+      const targetStickyId = getStickyIdFromDragTarget(over);
+      const oldIndex = state.blocks.findIndex((b) => b.id === activeStickyId);
+      const newIndex = state.blocks.findIndex((b) => b.id === targetStickyId);
 
       if (oldIndex !== -1 && newIndex !== -1) {
         const newBlocks = arrayMove(state.blocks, oldIndex, newIndex);
@@ -143,7 +254,14 @@ export function Dashboard() {
       return <LogoutRedirect />;
     }
 
-    return <AuthScreen onAuthChange={onAuthChange} />;
+    if (!localPreviewEnabled) {
+      return (
+        <AuthScreen
+          onAuthChange={onAuthChange}
+          onStartLocalPreview={() => setLocalPreviewEnabled(true)}
+        />
+      );
+    }
   }
 
   return (
@@ -158,7 +276,7 @@ export function Dashboard() {
           <div className="flex-shrink-0 w-full sm:w-auto">
             {/* Discard any password-manager DOM additions with the signed-out form. */}
             <AuthBar
-              key={user.id}
+              key={user?.id ?? "local-preview"}
               user={user}
               syncStatus={syncStatus}
               onAuthChange={onAuthChange}
@@ -231,7 +349,10 @@ export function Dashboard() {
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragOver={handleDragOver}
               onDragEnd={handleDragEnd}
+              onDragCancel={() => setTaskDropTargetStickyId(null)}
             >
               <SortableContext
                 items={state.blocks.map((b) => b.id)}
@@ -258,13 +379,11 @@ export function Dashboard() {
                       onUpdateItemText={(itemId, text) =>
                         updateItemText(block.id, itemId, text)
                       }
-                      onReorderItems={(newItems) =>
-                        reorderItems(block.id, newItems)
-                      }
                       onMoveUp={() => moveBlock(index, "up")}
                       onMoveDown={() => moveBlock(index, "down")}
                       onDeleteBlock={() => deleteBlock(block.id)}
                       onClearTasks={() => clearStickyArchivedTasks(block.id)}
+                      isTaskDropTarget={taskDropTargetStickyId === block.id}
                     />
                   ))}
                 </div>

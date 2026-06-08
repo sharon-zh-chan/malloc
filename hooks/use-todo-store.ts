@@ -32,6 +32,7 @@ type AnalyticsEventName =
   | "task_completed"
   | "task_deleted"
   | "task_restored"
+  | "task_moved"
   | "tasks_reordered"
   | "archived_tasks_cleared"
   | "memo_created"
@@ -257,6 +258,8 @@ function mutationQueueKey(mutation: WorkspaceMutation): string | null {
     case "renameSticky":
       return `${mutation.action}:${mutation.payload.stickyId}`;
     case "editTask":
+      return `${mutation.action}:${mutation.payload.taskId}`;
+    case "moveTask":
       return `${mutation.action}:${mutation.payload.taskId}`;
     case "reorderTasks":
       return `${mutation.action}:${mutation.payload.stickyId}`;
@@ -805,6 +808,67 @@ export function useTodoStore() {
     [applyLocalMutation, trackProductEvent],
   );
 
+  const moveItem = useCallback(
+    (fromStickyId: string, toStickyId: string, taskId: string) => {
+      if (fromStickyId === toStickyId) return;
+
+      const sourceSticky = state.blocks.find(
+        (sticky) => sticky.id === fromStickyId,
+      );
+      const targetSticky = state.blocks.find(
+        (sticky) => sticky.id === toStickyId,
+      );
+      const task = sourceSticky?.items.find(
+        (candidate) => candidate.id === taskId,
+      );
+
+      if (!sourceSticky || !targetSticky || !task) return;
+
+      const order =
+        Math.max(
+          -1,
+          ...targetSticky.items
+            .filter((candidate) => candidate.status === task.status)
+            .map((candidate) => candidate.order),
+        ) + 1;
+
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((sticky) => {
+            if (sticky.id === fromStickyId) {
+              return {
+                ...sticky,
+                items: sticky.items.filter(
+                  (candidate) => candidate.id !== taskId,
+                ),
+              };
+            }
+
+            if (sticky.id === toStickyId) {
+              return {
+                ...sticky,
+                items: [...sticky.items, { ...task, order }],
+              };
+            }
+
+            return sticky;
+          }),
+        }),
+        {
+          action: "moveTask",
+          payload: { fromStickyId, toStickyId, taskId, order },
+        },
+      );
+      void trackProductEvent("task_moved", {
+        status: task.status,
+        from_sticky_id: fromStickyId,
+        to_sticky_id: toStickyId,
+      });
+    },
+    [applyLocalMutation, state.blocks, trackProductEvent],
+  );
+
   const addItem = useCallback(
     (stickyId: string, text: string) => {
       const sticky = state.blocks.find((candidate) => candidate.id === stickyId);
@@ -1230,6 +1294,7 @@ export function useTodoStore() {
     deleteBlock,
     reorderBlocks,
     reorderItems,
+    moveItem,
     addItem,
     updateItemText,
     toggleItemStatus,
