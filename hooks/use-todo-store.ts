@@ -718,7 +718,6 @@ export function useTodoStore() {
 
   const addBlock = useCallback(
     (title: string) => {
-      if (state.blocks.length >= 10) return;
       const sticky: TodoBlock = {
         id: generateId(),
         title,
