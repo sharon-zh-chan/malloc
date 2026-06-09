@@ -254,7 +254,7 @@ export function Dashboard() {
   }
 
   if (user && !workspaceReady) {
-    return <AuthScreen onAuthChange={onAuthChange} />;
+    return <LoadingWorkspace />;
   }
 
   if (!user) {
