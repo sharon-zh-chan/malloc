@@ -646,6 +646,34 @@ function TextBlockEditor({
     onUpdateContent(editorRef.current?.innerHTML ?? "");
   };
 
+  const getSelectedBlockTagName = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection?.anchorNode) return "";
+
+    let node: Node | null = selection.anchorNode;
+    if (node.nodeType === Node.TEXT_NODE) {
+      node = node.parentElement;
+    }
+
+    while (node && node !== editor) {
+      if (node instanceof HTMLElement) {
+        const tagName = node.tagName.toLowerCase();
+        if (/^(h[1-6]|p|div|li)$/.test(tagName)) {
+          return tagName;
+        }
+      }
+      node = node.parentElement;
+    }
+
+    return "";
+  };
+
+  const toggleBlockFormat = (tagName: string) => {
+    const activeTagName = getSelectedBlockTagName();
+    runFormatCommand("formatBlock", activeTagName === tagName ? "p" : tagName);
+  };
+
   return (
     <section className="sketchy-card p-4 min-h-[520px] flex flex-col">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -703,7 +731,7 @@ function TextBlockEditor({
       <div className="mt-3 flex flex-wrap items-center gap-1 border-y border-primary/20 py-2">
         <ToolbarButton
           label="Heading"
-          onClick={() => runFormatCommand("formatBlock", "h2")}
+          onClick={() => toggleBlockFormat("h2")}
         >
           <Heading2 className="h-4 w-4" />
         </ToolbarButton>
