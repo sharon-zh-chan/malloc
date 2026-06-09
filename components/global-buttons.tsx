@@ -36,7 +36,7 @@ export function GlobalButtons({
     string | null
   >(null);
   const blockInputRef = useRef<HTMLInputElement>(null);
-  const isAtLimit = mode === "stickies" ? blocks.length >= 10 : textBlocks.length >= 30;
+  const isAtLimit = mode === "memos" && textBlocks.length >= 30;
   const canClearArchivedTasks = blocks.some((block) =>
     block.items.some((item) => item.status !== "todo"),
   );
