@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { MemoCollection, TextBlock } from "@/lib/types";
 import {
-  Archive,
   Bold,
   Check,
   ChevronDown,
@@ -41,9 +40,9 @@ interface TextBlocksPageProps {
   onDeleteCollection: (collectionId: string) => void;
 }
 
-const DEFAULT_BLOCK_TITLE = "Untitled Memo";
-const UNFILED_LABEL = "Unfiled";
-const ARCHIVE_LABEL = "Archive";
+const DEFAULT_BLOCK_TITLE = "Untitled Note";
+const UNFILED_LABEL = "No folder";
+const ARCHIVE_LABEL = "Deleted";
 const UNFILED_COLLECTION_KEY = "__unfiled";
 const ARCHIVE_COLLECTION_KEY = "__archive";
 
@@ -161,7 +160,7 @@ export function TextBlocksPage({
       <aside className="sketchy-card p-3 h-fit lg:sticky lg:top-4">
         <div className="flex items-center justify-between gap-2 mb-2">
           {!menuCollapsed && (
-            <h2 className="text-sm font-bold text-foreground">Memos</h2>
+            <h2 className="text-sm font-bold text-foreground">Notepad</h2>
           )}
           <div className="flex items-center gap-1">
             <button
@@ -169,7 +168,7 @@ export function TextBlocksPage({
               onClick={() => setMenuCollapsed((collapsed) => !collapsed)}
               className="h-8 w-8 flex items-center justify-center rounded-full text-muted-foreground hover:bg-primary/10 hover:text-foreground transition-colors"
               aria-label={
-                menuCollapsed ? "Expand memos menu" : "Collapse memos menu"
+                menuCollapsed ? "Expand notepad menu" : "Collapse notepad menu"
               }
               title={menuCollapsed ? "Expand menu" : "Collapse menu"}
             >
@@ -220,7 +219,7 @@ export function TextBlocksPage({
               </div>
             )}
 
-            <nav className="flex flex-col gap-3" aria-label="Memo collections">
+            <nav className="flex flex-col gap-3" aria-label="Notepad collections">
               <CollectionGroup
                 title={UNFILED_LABEL}
                 collectionKey={UNFILED_COLLECTION_KEY}
@@ -332,19 +331,19 @@ export function TextBlocksPage({
             type="button"
             onClick={handleQuickAdd}
             className="flex flex-col items-center gap-3 text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Add your first memo"
+            aria-label="Add your first note"
           >
             <span className="sketchy-btn h-14 w-14 flex items-center justify-center">
               <Plus className="h-6 w-6" />
             </span>
-            <span className="text-sm font-medium">Add a new memo</span>
+            <span className="text-sm font-medium">Add a new note</span>
           </button>
         </div>
       )}
 
       <ConfirmModal
         open={Boolean(memoPendingDelete)}
-        title="Delete Memo"
+        title="Delete Note"
         message={`Permanently delete "${memoPendingDelete?.title ?? ""}"? This cannot be undone.`}
         confirmLabel="Delete"
         onConfirm={() => {
@@ -498,8 +497,8 @@ function CollectionGroup({
                 type="button"
                 onClick={onAddMemo}
                 className="h-6 w-6 flex items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-foreground"
-                aria-label={`Add memo to ${title}`}
-                title="Add memo"
+                aria-label={`Add note to ${title}`}
+                title="Add note"
               >
                 <Plus className="h-3 w-3" />
               </button>
@@ -596,10 +595,10 @@ function CollectionGroup({
                   type="button"
                   onClick={() => onArchiveBlock(block.id)}
                   className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-primary/10 hover:text-foreground group-hover/memo:opacity-100"
-                  aria-label={`Archive ${block.title}`}
-                  title="Archive"
+                  aria-label={`Delete ${block.title}`}
+                  title="Delete"
                 >
-                  <Archive className="h-3.5 w-3.5" />
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
               )}
             </div>
@@ -672,8 +671,8 @@ function TextBlockEditor({
                 type="button"
                 onClick={onRestore}
                 className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground/80 hover:bg-primary/10 hover:text-foreground transition-colors"
-                aria-label="Restore memo"
-                title="Restore memo"
+                aria-label="Restore note"
+                title="Restore note"
               >
                 <Undo2 className="h-4 w-4" />
               </button>
@@ -681,7 +680,7 @@ function TextBlockEditor({
                 type="button"
                 onClick={onRequestDelete}
                 className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground/80 hover:bg-destructive/10 hover:text-destructive transition-colors"
-                aria-label="Delete memo permanently"
+                aria-label="Delete note permanently"
                 title="Delete permanently"
               >
                 <Trash2 className="h-4 w-4" />
@@ -692,10 +691,10 @@ function TextBlockEditor({
               type="button"
               onClick={onArchive}
               className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground/80 hover:bg-primary/10 hover:text-foreground transition-colors"
-              aria-label="Archive memo"
-              title="Archive memo"
+              aria-label="Delete note"
+              title="Delete note"
             >
-              <Archive className="h-4 w-4" />
+              <Trash2 className="h-4 w-4" />
             </button>
           )}
         </div>
@@ -789,7 +788,7 @@ function TitleEditor({ title, onUpdateTitle, onEnter }: TitleEditorProps) {
         }
       }}
       className="min-w-0 flex-1 bg-transparent text-xl font-bold text-foreground outline-none rounded px-1 py-1 focus:bg-background/40 focus:ring-2 focus:ring-primary/20"
-      aria-label="Memo title"
+      aria-label="Note title"
     />
   );
 }

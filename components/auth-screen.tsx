@@ -29,8 +29,8 @@ export function AuthScreen({
               Hello, welcome to Malloc!
             </h1>
             <p className="mt-5 max-w-xl text-base leading-7 text-muted-foreground">
-              This is the space for capturing tasks, memos and whatever is on
-              your mind.
+              This is the space for capturing tasks, notepad notes and whatever
+              is on your mind.
             </p>
             <AuthBar
               user={null}

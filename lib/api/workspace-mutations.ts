@@ -14,6 +14,7 @@ const taskSchema = z.object({
   text: z.string(),
   status: z.enum(["todo", "completed", "deleted"]),
   createdAt: timestamp,
+  clearedAt: timestamp.nullable().optional(),
   order: z.number().int(),
 });
 
@@ -50,6 +51,8 @@ export const workspaceMutationActionSchema = z.enum([
   "reorderTasks",
   "clearArchivedTasks",
   "clearStickyArchivedTasks",
+  "restoreTask",
+  "deleteTasksPermanently",
   "addMemo",
   "renameMemo",
   "editMemo",
@@ -115,11 +118,23 @@ export const workspaceMutationSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("clearArchivedTasks"),
-    payload: z.object({}),
+    payload: z.object({ clearedAt: timestamp.optional() }),
   }),
   z.object({
     action: z.literal("clearStickyArchivedTasks"),
-    payload: z.object({ stickyId: id }),
+    payload: z.object({ stickyId: id, clearedAt: timestamp.optional() }),
+  }),
+  z.object({
+    action: z.literal("restoreTask"),
+    payload: z.object({
+      stickyId: id,
+      taskId: id,
+      order: z.number().int(),
+    }),
+  }),
+  z.object({
+    action: z.literal("deleteTasksPermanently"),
+    payload: z.object({ taskIds: z.array(id) }),
   }),
   z.object({
     action: z.literal("addMemo"),

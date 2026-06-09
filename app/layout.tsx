@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "malloc | Space for what's on your mind",
   description:
-    "A lightweight workspace for capturing tasks, memos and whatever is on your mind.",
+    "A lightweight workspace for capturing tasks, notepad notes and whatever is on your mind.",
   icons: {
     icon: "/brand/malloc-symbol.svg",
   },

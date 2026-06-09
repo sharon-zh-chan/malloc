@@ -111,7 +111,17 @@ function migrateAppState(raw: Partial<AppState>): AppState {
 
   return {
     timeRange: raw.timeRange ?? fallback.timeRange,
-    blocks: Array.isArray(raw.blocks) ? raw.blocks : fallback.blocks,
+    blocks: Array.isArray(raw.blocks)
+      ? raw.blocks.map((block) => ({
+          ...block,
+          items: Array.isArray(block.items)
+            ? block.items.map((task) => ({
+                ...task,
+                clearedAt: task.clearedAt ?? null,
+              }))
+            : [],
+        }))
+      : fallback.blocks,
     textBlocks: Array.isArray(raw.textBlocks)
       ? raw.textBlocks.map((block) => ({
           ...block,
@@ -255,6 +265,8 @@ function mutationQueueKey(mutation: WorkspaceMutation): string | null {
       return mutation.action;
     case "clearStickyArchivedTasks":
       return `${mutation.action}:${mutation.payload.stickyId}`;
+    case "restoreTask":
+      return `${mutation.action}:${mutation.payload.taskId}`;
     case "renameSticky":
       return `${mutation.action}:${mutation.payload.stickyId}`;
     case "editTask":
@@ -877,6 +889,7 @@ export function useTodoStore() {
         text,
         status: "todo",
         createdAt: Date.now(),
+        clearedAt: null,
         order: sticky.items.length,
       };
       applyLocalMutation(
@@ -930,7 +943,9 @@ export function useTodoStore() {
               ? {
                   ...sticky,
                   items: sticky.items.map((task) =>
-                    task.id === taskId ? { ...task, status, order } : task,
+                    task.id === taskId
+                      ? { ...task, status, clearedAt: null, order }
+                      : task,
                   ),
                 }
               : sticky,
@@ -975,9 +990,12 @@ export function useTodoStore() {
   );
 
   const clearAndArchive = useCallback(() => {
+    const clearedAt = Date.now();
     const archivedCount = state.blocks.reduce(
       (count, sticky) =>
-        count + sticky.items.filter((task) => task.status !== "todo").length,
+        count +
+        sticky.items.filter((task) => task.status !== "todo" && !task.clearedAt)
+          .length,
       0,
     );
     applyLocalMutation(
@@ -985,10 +1003,14 @@ export function useTodoStore() {
         ...prev,
         blocks: prev.blocks.map((sticky) => ({
           ...sticky,
-          items: sticky.items.filter((task) => task.status === "todo"),
+          items: sticky.items.map((task) =>
+            task.status !== "todo" && !task.clearedAt
+              ? { ...task, clearedAt }
+              : task,
+          ),
         })),
       }),
-      { action: "clearArchivedTasks", payload: {} },
+      { action: "clearArchivedTasks", payload: { clearedAt } },
     );
     void trackProductEvent("archived_tasks_cleared", {
       scope: "workspace",
@@ -998,9 +1020,12 @@ export function useTodoStore() {
 
   const clearStickyArchivedTasks = useCallback(
     (stickyId: string) => {
+      const clearedAt = Date.now();
       const sticky = state.blocks.find((candidate) => candidate.id === stickyId);
       const archivedCount =
-        sticky?.items.filter((task) => task.status !== "todo").length ?? 0;
+        sticky?.items.filter(
+          (task) => task.status !== "todo" && !task.clearedAt,
+        ).length ?? 0;
       applyLocalMutation(
         (prev) => ({
           ...prev,
@@ -1008,12 +1033,19 @@ export function useTodoStore() {
             sticky.id === stickyId
               ? {
                   ...sticky,
-                  items: sticky.items.filter((task) => task.status === "todo"),
+                  items: sticky.items.map((task) =>
+                    task.status !== "todo" && !task.clearedAt
+                      ? { ...task, clearedAt }
+                      : task,
+                  ),
                 }
               : sticky,
           ),
         }),
-        { action: "clearStickyArchivedTasks", payload: { stickyId } },
+        {
+          action: "clearStickyArchivedTasks",
+          payload: { stickyId, clearedAt },
+        },
       );
       void trackProductEvent("archived_tasks_cleared", {
         scope: "sticky",
@@ -1021,6 +1053,63 @@ export function useTodoStore() {
       });
     },
     [applyLocalMutation, state.blocks, trackProductEvent],
+  );
+
+  const restoreTaskToTodo = useCallback(
+    (stickyId: string, taskId: string) => {
+      const order = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((sticky) =>
+            sticky.id === stickyId
+              ? {
+                  ...sticky,
+                  items: sticky.items.map((task) =>
+                    task.id === taskId
+                      ? {
+                          ...task,
+                          status: "todo",
+                          clearedAt: null,
+                          order,
+                        }
+                      : task,
+                  ),
+                }
+              : sticky,
+          ),
+        }),
+        { action: "restoreTask", payload: { stickyId, taskId, order } },
+      );
+      void trackProductEvent("task_restored", { status: "todo" });
+    },
+    [applyLocalMutation, trackProductEvent],
+  );
+
+  const deleteTasksPermanently = useCallback(
+    (taskIds: string[]) => {
+      const taskIdSet = new Set(taskIds);
+      if (taskIdSet.size === 0) return;
+
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((sticky) => ({
+            ...sticky,
+            items: sticky.items.filter((task) => !taskIdSet.has(task.id)),
+          })),
+        }),
+        {
+          action: "deleteTasksPermanently",
+          payload: { taskIds: Array.from(taskIdSet) },
+        },
+      );
+      void trackProductEvent("archived_tasks_cleared", {
+        scope: "history",
+        tasks_cleared: taskIdSet.size,
+      });
+    },
+    [applyLocalMutation, trackProductEvent],
   );
 
   const addTextBlock = useCallback(
@@ -1301,6 +1390,8 @@ export function useTodoStore() {
     undoDeleteItem,
     clearAndArchive,
     clearStickyArchivedTasks,
+    restoreTaskToTodo,
+    deleteTasksPermanently,
     addTextBlock,
     updateTextBlockTitle,
     updateTextBlockContent,

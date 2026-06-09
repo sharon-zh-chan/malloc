@@ -85,8 +85,8 @@ export function GlobalButtons({
           onClick={() => setShowAddModal(true)}
           disabled={isAtLimit}
           className="flex h-9 w-9 items-center justify-center bg-card text-primary transition-colors hover:bg-primary hover:text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          aria-label={mode === "memos" ? "Add memo" : "Add sticky"}
-          title={mode === "memos" ? "Add memo" : "Add sticky"}
+          aria-label={mode === "memos" ? "Add note" : "Add sticky"}
+          title={mode === "memos" ? "Add note" : "Add sticky"}
         >
           <Plus className="h-4 w-4" />
         </button>
@@ -103,12 +103,12 @@ export function GlobalButtons({
           }}
           role="dialog"
           aria-modal="true"
-          aria-label={mode === "memos" ? "Add memo" : "Add sticky"}
+          aria-label={mode === "memos" ? "Add note" : "Add sticky"}
         >
           <div className="sketchy-card mx-4 w-72 p-5">
             <div className="flex flex-col gap-3">
               <h2 className="text-base font-bold text-foreground">
-                New {mode === "memos" ? "Memo" : "Sticky"}
+                New {mode === "memos" ? "Note" : "Sticky"}
               </h2>
               <input
                 ref={blockInputRef}
@@ -118,7 +118,7 @@ export function GlobalButtons({
                   if (event.key === "Enter") handleAddBlock();
                   if (event.key === "Escape") closeModal();
                 }}
-                placeholder={`${mode === "memos" ? "Memo" : "Sticky"} title...`}
+                placeholder={`${mode === "memos" ? "Note" : "Sticky"} title...`}
                 className="bg-background/50 px-3 py-2 text-sm text-foreground sketchy-border-light outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground"
               />
               {mode === "memos" && (
@@ -140,7 +140,7 @@ export function GlobalButtons({
                   onClick={handleAddBlock}
                   className="flex-1 bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                 >
-                  Add {mode === "memos" ? "Memo" : "Sticky"}
+                  Add {mode === "memos" ? "Note" : "Sticky"}
                 </button>
                 <button
                   type="button"
@@ -158,7 +158,7 @@ export function GlobalButtons({
       <ConfirmModal
         open={showCleanupConfirm}
         title="Clear Completed And Deleted Tasks?"
-        message="Remove all completed and deleted tasks from every sticky? This cannot be undone."
+        message="Move all completed and deleted tasks from every sticky to History? You can recover them later or delete them permanently from History."
         confirmLabel="Clear Tasks"
         onConfirm={() => {
           onClearArchivedTasks();

@@ -5,6 +5,7 @@ export interface TodoItem {
   text: string;
   status: ItemStatus;
   createdAt: number;
+  clearedAt?: number | null;
   order: number;
 }
 

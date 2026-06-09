@@ -9,6 +9,7 @@ import { AuthBar } from "./auth-bar";
 import { AuthScreen } from "./auth-screen";
 import { LoggedOutScreen } from "./logged-out-screen";
 import { TextBlocksPage } from "./text-blocks-page";
+import { HistoryPage } from "./history-page";
 import {
   DndContext,
   closestCenter,
@@ -86,6 +87,8 @@ export function Dashboard() {
     undoDeleteItem,
     clearAndArchive,
     clearStickyArchivedTasks,
+    restoreTaskToTodo,
+    deleteTasksPermanently,
     addTextBlock,
     updateTextBlockTitle,
     updateTextBlockContent,
@@ -99,7 +102,7 @@ export function Dashboard() {
     trackProductEvent,
   } = useTodoStore();
 
-  const [activeView, setActiveView] = useState<"stickies" | "memos">(
+  const [activeView, setActiveView] = useState<"stickies" | "memos" | "history">(
     "stickies",
   );
   const [selectedTextBlockId, setSelectedTextBlockId] = useState<string | null>(
@@ -110,6 +113,11 @@ export function Dashboard() {
     string | null
   >(null);
   const [localPreviewEnabled, setLocalPreviewEnabled] = useState(false);
+  const activeBlocks = state.blocks.map((block) => ({
+    ...block,
+    items: block.items.filter((item) => !item.clearedAt),
+  }));
+  const activeTextBlocks = state.textBlocks.filter((block) => !block.archivedAt);
   // Drag and drop sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -125,11 +133,11 @@ export function Dashboard() {
   useEffect(() => {
     if (
       selectedTextBlockId &&
-      !state.textBlocks.some((block) => block.id === selectedTextBlockId)
+      !activeTextBlocks.some((block) => block.id === selectedTextBlockId)
     ) {
       setSelectedTextBlockId(null);
     }
-  }, [selectedTextBlockId, state.textBlocks]);
+  }, [activeTextBlocks, selectedTextBlockId]);
 
   const moveBlock = (index: number, direction: "up" | "down") => {
     const newBlocks = [...state.blocks];
@@ -324,21 +332,39 @@ export function Dashboard() {
                   : "text-muted-foreground hover:bg-background hover:text-foreground"
               }`}
             >
-              Memos
+              Notepad
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === "history"}
+              onClick={() => {
+                setActiveView("history");
+                void trackProductEvent("view_switched", { view: "history" });
+              }}
+              className={`border-r border-foreground px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
+                activeView === "history"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-background hover:text-foreground"
+              }`}
+            >
+              History
             </button>
           </div>
 
-          <GlobalButtons
-            mode={activeView}
-            blocks={state.blocks}
-            textBlocks={state.textBlocks}
-            memoCollections={state.memoCollections}
-            onAddBlock={addBlock}
-            onAddTextBlock={addTextBlock}
-            onSelectTextBlock={setSelectedTextBlockId}
-            onAddMemoCollection={addMemoCollection}
-            onClearArchivedTasks={clearAndArchive}
-          />
+          {activeView !== "history" && (
+            <GlobalButtons
+              mode={activeView}
+              blocks={activeBlocks}
+              textBlocks={activeTextBlocks}
+              memoCollections={state.memoCollections}
+              onAddBlock={addBlock}
+              onAddTextBlock={addTextBlock}
+              onSelectTextBlock={setSelectedTextBlockId}
+              onAddMemoCollection={addMemoCollection}
+              onClearArchivedTasks={clearAndArchive}
+            />
+          )}
         </div>
       </section>
 
@@ -355,16 +381,16 @@ export function Dashboard() {
               onDragCancel={() => setTaskDropTargetStickyId(null)}
             >
               <SortableContext
-                items={state.blocks.map((b) => b.id)}
+                items={activeBlocks.map((b) => b.id)}
                 strategy={rectSortingStrategy}
               >
                 <div className="brand-panel-grid grid grid-cols-1 gap-4 p-0 sm:grid-cols-2 lg:grid-cols-3">
-                  {state.blocks.map((block, index) => (
+                  {activeBlocks.map((block, index) => (
                     <TodoBlockCard
                       key={block.id}
                       block={block}
                       isFirst={index === 0}
-                      isLast={index === state.blocks.length - 1}
+                      isLast={index === activeBlocks.length - 1}
                       onUpdateTitle={(title) =>
                         updateBlockTitle(block.id, title)
                       }
@@ -390,7 +416,7 @@ export function Dashboard() {
               </SortableContext>
             </DndContext>
 
-            {state.blocks.length === 0 && (
+            {activeBlocks.length === 0 && (
               <div className="flex flex-col items-center justify-center py-20">
                 <p className="text-lg text-muted-foreground mb-2">
                   No stickies yet.
@@ -401,9 +427,9 @@ export function Dashboard() {
               </div>
             )}
           </>
-        ) : (
+        ) : activeView === "memos" ? (
           <TextBlocksPage
-            blocks={state.textBlocks}
+            blocks={activeTextBlocks}
             collections={state.memoCollections}
             selectedBlockId={selectedTextBlockId}
             onSelectBlock={setSelectedTextBlockId}
@@ -417,6 +443,18 @@ export function Dashboard() {
             onAddCollection={addMemoCollection}
             onUpdateCollectionTitle={updateMemoCollectionTitle}
             onDeleteCollection={deleteMemoCollection}
+          />
+        ) : (
+          <HistoryPage
+            state={state}
+            onRestoreTask={restoreTaskToTodo}
+            onDeleteTasks={deleteTasksPermanently}
+            onRestoreMemo={restoreTextBlock}
+            onDeleteMemo={deleteTextBlock}
+            onOpenRestoredMemo={(memoId) => {
+              setActiveView("memos");
+              setSelectedTextBlockId(memoId);
+            }}
           />
         )}
       </main>

@@ -328,7 +328,7 @@ export function TodoBlockCard({
       <ConfirmModal
         open={showCleanupConfirm}
         title="Clear completed and deleted tasks?"
-        message={`Remove completed and deleted tasks from "${block.title}"? This cannot be undone.`}
+        message={`Move completed and deleted tasks from "${block.title}" to History? You can recover them later or delete them permanently from History.`}
         confirmLabel="Clear tasks"
         onConfirm={() => {
           onClearTasks();

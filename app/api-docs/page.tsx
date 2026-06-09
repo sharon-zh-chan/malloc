@@ -33,7 +33,7 @@ const endpoints = [
     path: "/api/mutations",
     title: "Apply a workspace mutation",
     description:
-      "Apply an idempotent action such as addTask, reorderStickies, editMemo, or archiveMemo.",
+      "Apply an idempotent action such as addTask, reorderStickies, editMemo, or archiveMemo for notepad notes.",
     auth: "Requires Authorization: Bearer <access_token>.",
   },
   {

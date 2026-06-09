@@ -72,7 +72,7 @@ curl -X POST http://localhost:3000/api/mutations \
 Each `client_mutation_id` is an idempotency key. Supported actions include
 `addSticky`, `reorderStickies`, `addTask`, `setTaskStatus`, `moveTask`,
 `reorderTasks`, `clearStickyArchivedTasks`,
-`addMemo`, `editMemo`, `archiveMemo`, and memo collection operations.
+`addMemo`, `editMemo`, `archiveMemo`, and notepad collection operations.
 
 ### Legacy app-state compatibility
 
@@ -94,7 +94,7 @@ For a safe production rollout:
 2. Apply `scripts/003_add_action_shaped_persistence.sql`. It intentionally
    preserves `public.app_state` while copying existing user data into the
    normalized tables.
-3. Verify that existing stickies, tasks, memos, and memo collections appear for
+3. Verify that existing stickies, tasks, notepad notes, and notepad collections appear for
    signed-in users before merging or deploying the RPC-based frontend.
 4. Deploy the frontend and verify that a new task survives refresh and sign-in.
 5. Apply `scripts/004_disable_legacy_app_state_writes.sql` after the new
