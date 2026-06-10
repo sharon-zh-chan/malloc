@@ -170,6 +170,11 @@
   vertical-align: top;
 }
 
+.rich-text-editor td p,
+.rich-text-editor th p {
+  margin: 0;
+}
+
 .rich-text-editor td:empty::before,
 .rich-text-editor th:empty::before {
   content: attr(data-placeholder);

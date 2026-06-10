@@ -22,6 +22,7 @@ import {
   TableColumnsSplit,
   TableRowsSplit,
   Trash2,
+  Type,
   Undo2,
   X,
 } from "lucide-react";
@@ -646,7 +647,7 @@ function TextBlockEditor({
     }
   }, [block.content]);
 
-  const getSelectedTableCell = () => {
+  const getSelectedElement = () => {
     const editor = editorRef.current;
     const selection = window.getSelection();
     if (!editor || !selection?.anchorNode) return null;
@@ -658,7 +659,13 @@ function TextBlockEditor({
 
     if (!(node instanceof HTMLElement) || !editor.contains(node)) return null;
 
-    return node.closest("td, th") as HTMLTableCellElement | null;
+    return node;
+  };
+
+  const getSelectedTableCell = () => {
+    const node = getSelectedElement();
+
+    return node?.closest("td, th") as HTMLTableCellElement | null;
   };
 
   const syncTableSelectionState = () => {
@@ -688,28 +695,56 @@ function TextBlockEditor({
     syncTableSelectionState();
   };
 
+  const createBodyCell = () => {
+    const cell = document.createElement("td");
+    cell.dataset.placeholder = "Cell";
+    cell.innerHTML = "<p><br></p>";
+
+    return cell;
+  };
+
+  const insertNodeAtSelection = (node: Node) => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection?.rangeCount) {
+      editor?.appendChild(node);
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(node);
+  };
+
   const insertTable = () => {
-    const tableId = `memo-table-${Date.now()}`;
-    const rows = Array.from({ length: 3 }, () => {
-      const cells = Array.from(
-        { length: 3 },
-        () => '<td data-placeholder="Cell"><br></td>',
-      ).join("");
+    const editor = editorRef.current;
+    if (!editor) return;
 
-      return `<tr>${cells}</tr>`;
-    }).join("");
+    const table = document.createElement("table");
+    const tableBody = document.createElement("tbody");
+    const trailingParagraph = document.createElement("p");
+    trailingParagraph.innerHTML = "<br>";
 
+    for (let rowIndex = 0; rowIndex < 3; rowIndex += 1) {
+      const row = document.createElement("tr");
+      for (let columnIndex = 0; columnIndex < 3; columnIndex += 1) {
+        row.appendChild(createBodyCell());
+      }
+      tableBody.appendChild(row);
+    }
+
+    table.appendChild(tableBody);
     editorRef.current?.focus();
-    document.execCommand(
-      "insertHTML",
-      false,
-      `<table data-table-id="${tableId}"><tbody>${rows}</tbody></table><p><br></p>`,
-    );
-    const insertedTable = editorRef.current?.querySelector(
-      `table[data-table-id="${tableId}"]`,
-    );
-    insertedTable?.removeAttribute("data-table-id");
-    placeCaretInCell(insertedTable?.querySelector("td, th") ?? null);
+    const selectedBlock = getSelectedBlockElement();
+    const selectedTagName = selectedBlock?.tagName.toLowerCase();
+    if (selectedBlock && selectedTagName && /^h[1-6]$/.test(selectedTagName)) {
+      selectedBlock.after(table, trailingParagraph);
+    } else {
+      const fragment = document.createDocumentFragment();
+      fragment.append(table, trailingParagraph);
+      insertNodeAtSelection(fragment);
+    }
+    placeCaretInCell(table.querySelector("td, th"));
     saveEditorContent();
   };
 
@@ -737,9 +772,7 @@ function TextBlockEditor({
       const columnCount = row.cells.length || cell.cellIndex + 1;
 
       for (let index = 0; index < columnCount; index += 1) {
-        const nextCell = document.createElement("td");
-        nextCell.innerHTML = "<br>";
-        nextRow.appendChild(nextCell);
+        nextRow.appendChild(createBodyCell());
       }
 
       row.after(nextRow);
@@ -756,7 +789,8 @@ function TextBlockEditor({
         const insertedCell = row.insertCell(
           Math.min(targetIndex, row.cells.length),
         );
-        insertedCell.innerHTML = "<br>";
+        insertedCell.dataset.placeholder = "Cell";
+        insertedCell.innerHTML = "<p><br></p>";
         if (row === selectedRow) {
           nextCell = insertedCell;
         }
@@ -819,27 +853,35 @@ function TextBlockEditor({
     });
   };
 
-  const getSelectedBlockTagName = () => {
+  const getSelectedBlockElement = () => {
     const editor = editorRef.current;
-    const selection = window.getSelection();
-    if (!editor || !selection?.anchorNode) return "";
-
-    let node: Node | null = selection.anchorNode;
-    if (node.nodeType === Node.TEXT_NODE) {
-      node = node.parentElement;
-    }
+    let node: Node | null = getSelectedElement();
 
     while (node && node !== editor) {
       if (node instanceof HTMLElement) {
         const tagName = node.tagName.toLowerCase();
         if (/^(h[1-6]|p|div|li)$/.test(tagName)) {
-          return tagName;
+          return node;
         }
       }
       node = node.parentElement;
     }
 
+    return null;
+  };
+
+  const getSelectedBlockTagName = () => {
+    const selectedBlock = getSelectedBlockElement();
+
+    if (selectedBlock) {
+      return selectedBlock.tagName.toLowerCase();
+    }
+
     return "";
+  };
+
+  const setBodyText = () => {
+    runFormatCommand("formatBlock", "p");
   };
 
   const toggleBlockFormat = (tagName: string) => {
@@ -907,6 +949,9 @@ function TextBlockEditor({
           onClick={() => toggleBlockFormat("h2")}
         >
           <Heading2 className="h-4 w-4" />
+        </ToolbarButton>
+        <ToolbarButton label="Body text" onClick={setBodyText}>
+          <Type className="h-4 w-4" />
         </ToolbarButton>
         <ToolbarButton label="Bold" onClick={() => runFormatCommand("bold")}>
           <Bold className="h-4 w-4" />
