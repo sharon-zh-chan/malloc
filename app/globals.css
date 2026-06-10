@@ -154,3 +154,24 @@
 .rich-text-editor ol {
   list-style: decimal;
 }
+
+.rich-text-editor table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin: 0.85rem 0 1rem;
+}
+
+.rich-text-editor td,
+.rich-text-editor th {
+  min-width: 5rem;
+  border: 1px solid hsl(var(--foreground) / 0.38);
+  padding: 0.35rem 0.5rem;
+  vertical-align: top;
+}
+
+.rich-text-editor td:empty::before,
+.rich-text-editor th:empty::before {
+  content: attr(data-placeholder);
+  color: hsl(var(--muted-foreground) / 0.5);
+}

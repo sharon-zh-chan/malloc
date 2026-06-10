@@ -16,6 +16,11 @@ import {
   Menu,
   Pencil,
   Plus,
+  SquareMinus,
+  SquarePlus,
+  Table2,
+  TableColumnsSplit,
+  TableRowsSplit,
   Trash2,
   Undo2,
   X,
@@ -633,6 +638,7 @@ function TextBlockEditor({
   onAddCollection,
 }: TextBlockEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
+  const [isCursorInTable, setIsCursorInTable] = useState(false);
 
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== block.content) {
@@ -640,10 +646,177 @@ function TextBlockEditor({
     }
   }, [block.content]);
 
+  const getSelectedTableCell = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection?.anchorNode) return null;
+
+    let node: Node | null = selection.anchorNode;
+    if (node.nodeType === Node.TEXT_NODE) {
+      node = node.parentElement;
+    }
+
+    if (!(node instanceof HTMLElement) || !editor.contains(node)) return null;
+
+    return node.closest("td, th") as HTMLTableCellElement | null;
+  };
+
+  const syncTableSelectionState = () => {
+    setIsCursorInTable(Boolean(getSelectedTableCell()));
+  };
+
   const runFormatCommand = (command: string, value?: string) => {
     editorRef.current?.focus();
     document.execCommand(command, false, value);
     onUpdateContent(editorRef.current?.innerHTML ?? "");
+    syncTableSelectionState();
+  };
+
+  const placeCaretInCell = (cell: HTMLTableCellElement | null) => {
+    if (!cell) return;
+
+    const range = document.createRange();
+    const selection = window.getSelection();
+    range.selectNodeContents(cell);
+    range.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  };
+
+  const saveEditorContent = () => {
+    onUpdateContent(editorRef.current?.innerHTML ?? "");
+    syncTableSelectionState();
+  };
+
+  const insertTable = () => {
+    const tableId = `memo-table-${Date.now()}`;
+    const rows = Array.from({ length: 3 }, () => {
+      const cells = Array.from(
+        { length: 3 },
+        () => '<td data-placeholder="Cell"><br></td>',
+      ).join("");
+
+      return `<tr>${cells}</tr>`;
+    }).join("");
+
+    editorRef.current?.focus();
+    document.execCommand(
+      "insertHTML",
+      false,
+      `<table data-table-id="${tableId}"><tbody>${rows}</tbody></table><p><br></p>`,
+    );
+    const insertedTable = editorRef.current?.querySelector(
+      `table[data-table-id="${tableId}"]`,
+    );
+    insertedTable?.removeAttribute("data-table-id");
+    placeCaretInCell(insertedTable?.querySelector("td, th") ?? null);
+    saveEditorContent();
+  };
+
+  const updateSelectedTable = (
+    updateTable: (
+      cell: HTMLTableCellElement,
+      row: HTMLTableRowElement,
+      table: HTMLTableElement,
+    ) => HTMLTableCellElement | null,
+  ) => {
+    const cell = getSelectedTableCell();
+    const row = cell?.parentElement;
+    const table = cell?.closest("table");
+    if (!cell || !(row instanceof HTMLTableRowElement) || !table) return;
+
+    const nextCell = updateTable(cell, row, table);
+    editorRef.current?.focus();
+    placeCaretInCell(nextCell);
+    saveEditorContent();
+  };
+
+  const addTableRow = () => {
+    updateSelectedTable((cell, row) => {
+      const nextRow = row.cloneNode(false) as HTMLTableRowElement;
+      const columnCount = row.cells.length || cell.cellIndex + 1;
+
+      for (let index = 0; index < columnCount; index += 1) {
+        const nextCell = document.createElement("td");
+        nextCell.innerHTML = "<br>";
+        nextRow.appendChild(nextCell);
+      }
+
+      row.after(nextRow);
+      return nextRow.cells[Math.min(cell.cellIndex, nextRow.cells.length - 1)];
+    });
+  };
+
+  const addTableColumn = () => {
+    updateSelectedTable((cell, selectedRow, table) => {
+      const targetIndex = cell.cellIndex + 1;
+      let nextCell: HTMLTableCellElement | null = null;
+
+      Array.from(table.rows).forEach((row) => {
+        const insertedCell = row.insertCell(
+          Math.min(targetIndex, row.cells.length),
+        );
+        insertedCell.innerHTML = "<br>";
+        if (row === selectedRow) {
+          nextCell = insertedCell;
+        }
+      });
+
+      return nextCell;
+    });
+  };
+
+  const deleteTableRow = () => {
+    updateSelectedTable((cell, row, table) => {
+      if (table.rows.length <= 1) {
+        table.remove();
+        return null;
+      }
+
+      const nextRow =
+        row.nextElementSibling instanceof HTMLTableRowElement
+          ? row.nextElementSibling
+          : row.previousElementSibling instanceof HTMLTableRowElement
+            ? row.previousElementSibling
+            : null;
+      const nextCell =
+        nextRow?.cells[Math.min(cell.cellIndex, nextRow.cells.length - 1)] ??
+        null;
+
+      row.remove();
+      return nextCell;
+    });
+  };
+
+  const deleteTableColumn = () => {
+    updateSelectedTable((cell, selectedRow, table) => {
+      if (table.rows[0]?.cells.length <= 1) {
+        table.remove();
+        return null;
+      }
+
+      const targetIndex = cell.cellIndex;
+      const nextColumnIndex = Math.max(targetIndex - 1, 0);
+      let nextCell: HTMLTableCellElement | null = null;
+
+      Array.from(table.rows).forEach((row) => {
+        if (row.cells[targetIndex]) {
+          row.deleteCell(targetIndex);
+        }
+        if (row === selectedRow) {
+          nextCell = row.cells[Math.min(nextColumnIndex, row.cells.length - 1)];
+        }
+      });
+
+      return nextCell;
+    });
+  };
+
+  const deleteTable = () => {
+    updateSelectedTable((_cell, _row, table) => {
+      table.remove();
+      return null;
+    });
   };
 
   const getSelectedBlockTagName = () => {
@@ -756,18 +929,63 @@ function TextBlockEditor({
         >
           <ListOrdered className="h-4 w-4" />
         </ToolbarButton>
+        <span className="mx-1 h-5 w-px bg-primary/20" aria-hidden />
+        <ToolbarButton label="Insert table" onClick={insertTable}>
+          <Table2 className="h-4 w-4" />
+        </ToolbarButton>
+        <ToolbarButton
+          label="Add table row"
+          onClick={addTableRow}
+          disabled={!isCursorInTable}
+        >
+          <TableRowsSplit className="h-4 w-4" />
+        </ToolbarButton>
+        <ToolbarButton
+          label="Add table column"
+          onClick={addTableColumn}
+          disabled={!isCursorInTable}
+        >
+          <TableColumnsSplit className="h-4 w-4" />
+        </ToolbarButton>
+        <ToolbarButton
+          label="Delete table row"
+          onClick={deleteTableRow}
+          disabled={!isCursorInTable}
+        >
+          <SquareMinus className="h-4 w-4" />
+        </ToolbarButton>
+        <ToolbarButton
+          label="Delete table column"
+          onClick={deleteTableColumn}
+          disabled={!isCursorInTable}
+        >
+          <SquarePlus className="h-4 w-4 rotate-45" />
+        </ToolbarButton>
+        <ToolbarButton
+          label="Delete table"
+          onClick={deleteTable}
+          disabled={!isCursorInTable}
+        >
+          <Trash2 className="h-4 w-4" />
+        </ToolbarButton>
       </div>
 
       <div
         ref={editorRef}
         contentEditable
         suppressContentEditableWarning
-        onInput={(event) => onUpdateContent(event.currentTarget.innerHTML)}
+        onClick={syncTableSelectionState}
+        onKeyUp={syncTableSelectionState}
+        onInput={(event) => {
+          onUpdateContent(event.currentTarget.innerHTML);
+          syncTableSelectionState();
+        }}
         onPaste={(event) => {
           event.preventDefault();
           const text = event.clipboardData.getData("text/plain");
           document.execCommand("insertText", false, text);
           onUpdateContent(event.currentTarget.innerHTML);
+          syncTableSelectionState();
         }}
         className="rich-text-editor mt-4 flex-1 min-h-[380px] rounded-md bg-background/35 px-4 py-3 text-base leading-7 text-foreground outline-none focus:ring-2 focus:ring-primary/20"
         aria-label={`Write content for ${block.title}`}
@@ -825,15 +1043,22 @@ interface ToolbarButtonProps {
   label: string;
   onClick: () => void;
   children: ReactNode;
+  disabled?: boolean;
 }
 
-function ToolbarButton({ label, onClick, children }: ToolbarButtonProps) {
+function ToolbarButton({
+  label,
+  onClick,
+  children,
+  disabled = false,
+}: ToolbarButtonProps) {
   return (
     <button
       type="button"
       onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
-      className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-foreground transition-colors"
+      disabled={disabled}
+      className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
       aria-label={label}
       title={label}
     >
