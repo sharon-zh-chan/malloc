@@ -51,6 +51,13 @@ const UNFILED_LABEL = "No folder";
 const ARCHIVE_LABEL = "Deleted";
 const UNFILED_COLLECTION_KEY = "__unfiled";
 const ARCHIVE_COLLECTION_KEY = "__archive";
+const FONT_SIZE_OPTIONS = {
+  small: { label: "Small", fontSize: "0.875rem", lineHeight: "1.5" },
+  body: { label: "Body", fontSize: "", lineHeight: "" },
+  large: { label: "Large", fontSize: "1.125rem", lineHeight: "1.6" },
+} as const;
+
+type FontSizeOption = keyof typeof FONT_SIZE_OPTIONS;
 
 export function TextBlocksPage({
   blocks,
@@ -884,6 +891,16 @@ function TextBlockEditor({
     runFormatCommand("formatBlock", "p");
   };
 
+  const applyFontSize = (size: FontSizeOption) => {
+    const target = getSelectedTableCell() ?? getSelectedBlockElement();
+    const style = FONT_SIZE_OPTIONS[size];
+    if (!target) return;
+
+    target.style.fontSize = style.fontSize;
+    target.style.lineHeight = style.lineHeight;
+    saveEditorContent();
+  };
+
   const toggleBlockFormat = (tagName: string) => {
     const activeTagName = getSelectedBlockTagName();
     runFormatCommand("formatBlock", activeTagName === tagName ? "p" : tagName);
@@ -953,6 +970,27 @@ function TextBlockEditor({
         <ToolbarButton label="Body text" onClick={setBodyText}>
           <Type className="h-4 w-4" />
         </ToolbarButton>
+        <select
+          aria-label="Font size"
+          title="Font size"
+          defaultValue=""
+          onChange={(event) => {
+            const value = event.currentTarget.value as FontSizeOption;
+            if (!value) return;
+            applyFontSize(value);
+            event.currentTarget.value = "";
+          }}
+          className="h-8 rounded-md border border-primary/20 bg-background/50 px-2 text-xs text-muted-foreground outline-none transition-colors hover:bg-primary/10 hover:text-foreground focus:ring-2 focus:ring-primary/20"
+        >
+          <option value="" disabled>
+            Size
+          </option>
+          {Object.entries(FONT_SIZE_OPTIONS).map(([value, option]) => (
+            <option key={value} value={value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
         <ToolbarButton label="Bold" onClick={() => runFormatCommand("bold")}>
           <Bold className="h-4 w-4" />
         </ToolbarButton>
