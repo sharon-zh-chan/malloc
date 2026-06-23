@@ -362,7 +362,7 @@ export function AuthBar({
       case "error":
         return "Sync error";
       case "conflict":
-        return "Conflict detected (remote applied)";
+        return "Some local changes were not synced";
       default:
         return "";
     }

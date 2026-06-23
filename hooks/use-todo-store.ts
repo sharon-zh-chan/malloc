@@ -20,7 +20,9 @@ import type { User, RealtimeChannel } from "@supabase/supabase-js";
 
 const STORAGE_KEY = "todo-at-one-glance";
 const MUTATION_QUEUE_KEY = "todo-at-one-glance-pending-mutations";
+const FAILED_MUTATION_QUEUE_KEY = "todo-at-one-glance-failed-mutations";
 const ANALYTICS_HEARTBEAT_MS = 30_000;
+const FAILED_MUTATION_QUEUE_LIMIT = 20;
 
 type AnalyticsEventName =
   | "session_started"
@@ -51,6 +53,16 @@ type QueuedMutation = {
   mutation: WorkspaceMutation;
 };
 
+type FailedQueuedMutation = QueuedMutation & {
+  failedAt: number;
+  reason: string;
+};
+
+type FlushMutationQueueResult = {
+  flushed: boolean;
+  discardedFailedMutation: boolean;
+};
+
 type WorkspaceStateResponse = {
   state: Partial<AppState> | null;
   updated_at: string | null;
@@ -71,6 +83,37 @@ function reportSyncFailure(context: string, error: unknown): SyncStatus {
 
 function reportAnalyticsFailure(context: string, error: unknown) {
   console.warn(`[analytics] ${context}`, error);
+}
+
+function getErrorMessage(error: unknown) {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function isPermanentQueuedMutationError(error: unknown) {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    return false;
+  }
+
+  const message = getErrorMessage(error);
+
+  return [
+    /not found/i,
+    /unsupported workspace action/i,
+    /invalid input syntax/i,
+    /violates .*constraint/i,
+    /duplicate key value/i,
+    /null value in column/i,
+    /cannot cast/i,
+  ].some((pattern) => pattern.test(message));
 }
 
 function generateId(): string {
@@ -177,6 +220,23 @@ function saveMutationQueue(queue: QueuedMutation[]) {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(MUTATION_QUEUE_KEY, JSON.stringify(queue));
+  } catch {
+    // Storage may be full or unavailable.
+  }
+}
+
+function saveFailedMutation(mutation: FailedQueuedMutation) {
+  if (typeof window === "undefined") return;
+  try {
+    const failedQueue = JSON.parse(
+      localStorage.getItem(FAILED_MUTATION_QUEUE_KEY) ?? "[]",
+    );
+    const nextQueue = [
+      mutation,
+      ...(Array.isArray(failedQueue) ? failedQueue : []),
+    ].slice(0, FAILED_MUTATION_QUEUE_LIMIT);
+
+    localStorage.setItem(FAILED_MUTATION_QUEUE_KEY, JSON.stringify(nextQueue));
   } catch {
     // Storage may be full or unavailable.
   }
@@ -324,60 +384,68 @@ export function useTodoStore() {
     saveLocalState(state);
   }, [state, hydrated]);
 
-  const hydrateWorkspace = useCallback(async () => {
-    const currentUser = userRef.current;
-    const supabase = supabaseRef.current;
-    if (!currentUser || !supabase) return false;
+  const hydrateWorkspace = useCallback(
+    async (successStatus: SyncStatus = "synced") => {
+      const currentUser = userRef.current;
+      const supabase = supabaseRef.current;
+      if (!currentUser || !supabase) return false;
 
-    setSyncStatus("syncing");
-    const { data, error } = await supabase.rpc("get_workspace_state");
+      setSyncStatus("syncing");
+      const { data, error } = await supabase.rpc("get_workspace_state");
 
-    if (error) {
-      setSyncStatus(reportSyncFailure("hydrate workspace", error));
-      return false;
-    }
-
-    const response = data as WorkspaceStateResponse;
-    const currentState = stateRef.current;
-
-    if (!response.state) {
-      try {
-        const initialWorkspace = await createInitialWorkspace(
-          supabase,
-          currentState,
-        );
-        const nextState = migrateAppState(
-          initialWorkspace.state ?? currentState,
-        );
-        setState(nextState);
-        saveLocalState(nextState);
-        setSyncStatus("synced");
-        return true;
-      } catch (error) {
-        setSyncStatus(
-          reportSyncFailure("create initial workspace", error),
-        );
+      if (error) {
+        setSyncStatus(reportSyncFailure("hydrate workspace", error));
         return false;
       }
-    }
 
-    const remoteState = migrateAppState(response.state);
-    const remoteUpdatedAt = response.updated_at
-      ? new Date(response.updated_at).getTime()
-      : remoteState.lastUpdatedAt;
+      const response = data as WorkspaceStateResponse;
+      const currentState = stateRef.current;
 
-    const nextState = { ...remoteState, lastUpdatedAt: remoteUpdatedAt };
-    setState(nextState);
-    saveLocalState(nextState);
+      if (!response.state) {
+        try {
+          const initialWorkspace = await createInitialWorkspace(
+            supabase,
+            currentState,
+          );
+          const nextState = migrateAppState(
+            initialWorkspace.state ?? currentState,
+          );
+          setState(nextState);
+          saveLocalState(nextState);
+          setSyncStatus(successStatus);
+          return true;
+        } catch (error) {
+          setSyncStatus(
+            reportSyncFailure("create initial workspace", error),
+          );
+          return false;
+        }
+      }
 
-    setSyncStatus("synced");
-    return true;
-  }, []);
+      const remoteState = migrateAppState(response.state);
+      const remoteUpdatedAt = response.updated_at
+        ? new Date(response.updated_at).getTime()
+        : remoteState.lastUpdatedAt;
+
+      const nextState = { ...remoteState, lastUpdatedAt: remoteUpdatedAt };
+      setState(nextState);
+      saveLocalState(nextState);
+
+      setSyncStatus(successStatus);
+      return true;
+    },
+    [],
+  );
 
   const flushMutationQueue = useCallback(async () => {
     const currentUser = userRef.current;
     const supabase = supabaseRef.current;
-    if (!currentUser || !supabase || flushingRef.current) return false;
+    const result: FlushMutationQueueResult = {
+      flushed: false,
+      discardedFailedMutation: false,
+    };
+
+    if (!currentUser || !supabase || flushingRef.current) return result;
 
     flushingRef.current = true;
     setSyncStatus("syncing");
@@ -398,8 +466,27 @@ export function useTodoStore() {
 
         if (error) {
           ownMutationIdsRef.current.delete(next.id);
+
+          if (isPermanentQueuedMutationError(error)) {
+            console.warn("[workspace sync] discarding queued mutation", {
+              mutation: next.mutation,
+              error,
+            });
+            queueRef.current = queueRef.current.filter(
+              (queued) => queued.id !== next.id,
+            );
+            saveMutationQueue(queueRef.current);
+            saveFailedMutation({
+              ...next,
+              failedAt: Date.now(),
+              reason: getErrorMessage(error),
+            });
+            result.discardedFailedMutation = true;
+            continue;
+          }
+
           setSyncStatus(reportSyncFailure("apply queued mutation", error));
-          return false;
+          return result;
         }
 
         queueRef.current = queueRef.current.filter(
@@ -408,8 +495,9 @@ export function useTodoStore() {
         saveMutationQueue(queueRef.current);
       }
 
-      setSyncStatus("synced");
-      return true;
+      result.flushed = true;
+      setSyncStatus(result.discardedFailedMutation ? "conflict" : "synced");
+      return result;
     } finally {
       flushingRef.current = false;
     }
@@ -465,10 +553,16 @@ export function useTodoStore() {
       }
 
       userRef.current = currentUser;
-      const flushed = await flushMutationQueue();
+      const flushResult = await flushMutationQueue();
       if (requestId !== authRequestRef.current) return;
 
-      const ready = flushed ? await hydrateWorkspace() : false;
+      const ready = await hydrateWorkspace(
+        flushResult.discardedFailedMutation
+          ? "conflict"
+          : flushResult.flushed
+            ? "synced"
+            : "error",
+      );
       if (requestId !== authRequestRef.current) return;
 
       setUser(currentUser);
@@ -519,9 +613,14 @@ export function useTodoStore() {
 
   useEffect(() => {
     if (!hydrated || !user || workspaceReady) return;
-    void flushMutationQueue().then((flushed) => {
-      if (!flushed) return;
-      void hydrateWorkspace().then((ready) => {
+    void flushMutationQueue().then((flushResult) => {
+      void hydrateWorkspace(
+        flushResult.discardedFailedMutation
+          ? "conflict"
+          : flushResult.flushed
+            ? "synced"
+            : "error",
+      ).then((ready) => {
         if (ready) setWorkspaceReady(true);
       });
     });
@@ -559,7 +658,11 @@ export function useTodoStore() {
           }
 
           void flushMutationQueue().then((flushed) => {
-            if (flushed) void hydrateWorkspace();
+            if (flushed.flushed) {
+              void hydrateWorkspace(
+                flushed.discardedFailedMutation ? "conflict" : "synced",
+              );
+            }
           });
         },
       )
@@ -576,7 +679,11 @@ export function useTodoStore() {
   useEffect(() => {
     const handleOnline = () => {
       void flushMutationQueue().then((flushed) => {
-        if (flushed) void hydrateWorkspace();
+        if (flushed.flushed) {
+          void hydrateWorkspace(
+            flushed.discardedFailedMutation ? "conflict" : "synced",
+          );
+        }
       });
     };
     const handleOffline = () => {
