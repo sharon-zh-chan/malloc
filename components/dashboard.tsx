@@ -117,7 +117,6 @@ export function Dashboard() {
     ...block,
     items: block.items.filter((item) => !item.clearedAt),
   }));
-  const activeTextBlocks = state.textBlocks.filter((block) => !block.archivedAt);
   // Drag and drop sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -133,11 +132,11 @@ export function Dashboard() {
   useEffect(() => {
     if (
       selectedTextBlockId &&
-      !activeTextBlocks.some((block) => block.id === selectedTextBlockId)
+      !state.textBlocks.some((block) => block.id === selectedTextBlockId)
     ) {
       setSelectedTextBlockId(null);
     }
-  }, [activeTextBlocks, selectedTextBlockId]);
+  }, [state.textBlocks, selectedTextBlockId]);
 
   const moveBlock = (index: number, direction: "up" | "down") => {
     const newBlocks = [...state.blocks];
@@ -428,7 +427,7 @@ export function Dashboard() {
           </>
         ) : activeView === "memos" ? (
           <TextBlocksPage
-            blocks={activeTextBlocks}
+            blocks={state.textBlocks}
             collections={state.memoCollections}
             selectedBlockId={selectedTextBlockId}
             onSelectBlock={setSelectedTextBlockId}
