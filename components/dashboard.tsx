@@ -356,7 +356,6 @@ export function Dashboard() {
             <GlobalButtons
               mode={activeView}
               blocks={activeBlocks}
-              textBlocks={activeTextBlocks}
               memoCollections={state.memoCollections}
               onAddBlock={addBlock}
               onAddTextBlock={addTextBlock}

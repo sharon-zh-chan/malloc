@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { MemoCollection, TextBlock, TodoBlock } from "@/lib/types";
+import type { MemoCollection, TodoBlock } from "@/lib/types";
 import { BrushCleaning, Plus } from "lucide-react";
 import { MemoCollectionPicker } from "./memo-collection-picker";
 import { ConfirmModal } from "./confirm-modal";
@@ -9,7 +9,6 @@ import { ConfirmModal } from "./confirm-modal";
 interface GlobalButtonsProps {
   mode: "stickies" | "memos";
   blocks: TodoBlock[];
-  textBlocks: TextBlock[];
   memoCollections: MemoCollection[];
   onAddBlock: (title: string) => void;
   onAddTextBlock: (title: string, collectionId?: string | null) => string | null;
@@ -21,7 +20,6 @@ interface GlobalButtonsProps {
 export function GlobalButtons({
   mode,
   blocks,
-  textBlocks,
   memoCollections,
   onAddBlock,
   onAddTextBlock,
@@ -36,7 +34,6 @@ export function GlobalButtons({
     string | null
   >(null);
   const blockInputRef = useRef<HTMLInputElement>(null);
-  const isAtLimit = mode === "memos" && textBlocks.length >= 30;
   const canClearArchivedTasks = blocks.some((block) =>
     block.items.some((item) => item.status !== "todo"),
   );
@@ -83,7 +80,6 @@ export function GlobalButtons({
         <button
           type="button"
           onClick={() => setShowAddModal(true)}
-          disabled={isAtLimit}
           className="flex h-9 w-9 items-center justify-center bg-card text-primary transition-colors hover:bg-primary hover:text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={mode === "memos" ? "Add note" : "Add sticky"}
           title={mode === "memos" ? "Add note" : "Add sticky"}

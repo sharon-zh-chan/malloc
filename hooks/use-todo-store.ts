@@ -1222,7 +1222,7 @@ export function useTodoStore() {
   const addTextBlock = useCallback(
     (title: string, collectionId: string | null = null) => {
       const trimmed = title.trim();
-      if (!trimmed || state.textBlocks.length >= 30) return null;
+      if (!trimmed) return null;
 
       const now = Date.now();
       const memo: TextBlock = {
