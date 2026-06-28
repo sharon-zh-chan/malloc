@@ -13,6 +13,8 @@ const taskSchema = z.object({
   id,
   text: z.string(),
   status: z.enum(["todo", "completed", "deleted"]),
+  parentTaskId: id.nullable().optional(),
+  subtasksExpanded: z.boolean().optional(),
   createdAt: timestamp,
   clearedAt: timestamp.nullable().optional(),
   order: z.number().int(),
@@ -46,6 +48,7 @@ export const workspaceMutationActionSchema = z.enum([
   "reorderStickies",
   "addTask",
   "editTask",
+  "setTaskExpanded",
   "setTaskStatus",
   "moveTask",
   "reorderTasks",
@@ -93,6 +96,10 @@ export const workspaceMutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("editTask"),
     payload: z.object({ stickyId: id, taskId: id, text: z.string() }),
+  }),
+  z.object({
+    action: z.literal("setTaskExpanded"),
+    payload: z.object({ stickyId: id, taskId: id, expanded: z.boolean() }),
   }),
   z.object({
     action: z.literal("setTaskStatus"),

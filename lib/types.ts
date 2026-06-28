@@ -4,6 +4,8 @@ export interface TodoItem {
   id: string;
   text: string;
   status: ItemStatus;
+  parentTaskId?: string | null;
+  subtasksExpanded?: boolean;
   createdAt: number;
   clearedAt?: number | null;
   order: number;

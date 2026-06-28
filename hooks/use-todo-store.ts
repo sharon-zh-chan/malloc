@@ -160,6 +160,8 @@ function migrateAppState(raw: Partial<AppState>): AppState {
           items: Array.isArray(block.items)
             ? block.items.map((task) => ({
                 ...task,
+                parentTaskId: task.parentTaskId ?? null,
+                subtasksExpanded: task.subtasksExpanded ?? false,
                 clearedAt: task.clearedAt ?? null,
               }))
             : [],
@@ -330,6 +332,8 @@ function mutationQueueKey(mutation: WorkspaceMutation): string | null {
     case "renameSticky":
       return `${mutation.action}:${mutation.payload.stickyId}`;
     case "editTask":
+      return `${mutation.action}:${mutation.payload.taskId}`;
+    case "setTaskExpanded":
       return `${mutation.action}:${mutation.payload.taskId}`;
     case "moveTask":
       return `${mutation.action}:${mutation.payload.taskId}`;
@@ -920,7 +924,7 @@ export function useTodoStore() {
         },
       );
       void trackProductEvent("tasks_reordered", {
-        tasks_count: reordered.length,
+        tasks_count: reordered.filter((task) => !task.parentTaskId).length,
       });
     },
     [applyLocalMutation, trackProductEvent],
@@ -940,7 +944,14 @@ export function useTodoStore() {
         (candidate) => candidate.id === taskId,
       );
 
-      if (!sourceSticky || !targetSticky || !task) return;
+      if (!sourceSticky || !targetSticky || !task || task.parentTaskId) return;
+
+      const movingTaskIds = new Set([
+        taskId,
+        ...sourceSticky.items
+          .filter((candidate) => candidate.parentTaskId === taskId)
+          .map((candidate) => candidate.id),
+      ]);
 
       const order =
         Math.max(
@@ -958,15 +969,20 @@ export function useTodoStore() {
               return {
                 ...sticky,
                 items: sticky.items.filter(
-                  (candidate) => candidate.id !== taskId,
+                  (candidate) => !movingTaskIds.has(candidate.id),
                 ),
               };
             }
 
             if (sticky.id === toStickyId) {
+              const movingTasks = sourceSticky.items
+                .filter((candidate) => movingTaskIds.has(candidate.id))
+                .map((candidate) =>
+                  candidate.id === taskId ? { ...candidate, order } : candidate,
+                );
               return {
                 ...sticky,
-                items: [...sticky.items, { ...task, order }],
+                items: [...sticky.items, ...movingTasks],
               };
             }
 
@@ -995,6 +1011,8 @@ export function useTodoStore() {
         id: generateId(),
         text,
         status: "todo",
+        parentTaskId: null,
+        subtasksExpanded: false,
         createdAt: Date.now(),
         clearedAt: null,
         order: sticky.items.length,
@@ -1011,10 +1029,92 @@ export function useTodoStore() {
         { action: "addTask", payload: { stickyId, task } },
       );
       void trackProductEvent("task_created", {
-        tasks_count_after: sticky.items.length + 1,
+        tasks_count_after:
+          sticky.items.filter((item) => !item.parentTaskId).length + 1,
       });
     },
     [applyLocalMutation, state.blocks, trackProductEvent],
+  );
+
+  const addSubtask = useCallback(
+    (stickyId: string, parentTaskId: string, text: string) => {
+      const sticky = state.blocks.find((candidate) => candidate.id === stickyId);
+      const parent = sticky?.items.find(
+        (candidate) => candidate.id === parentTaskId && !candidate.parentTaskId,
+      );
+      if (!sticky || !parent || parent.status !== "todo") return;
+
+      const siblingOrders = sticky.items
+        .filter((candidate) => candidate.parentTaskId === parentTaskId)
+        .map((candidate) => candidate.order);
+      const task: TodoItem = {
+        id: generateId(),
+        text,
+        status: "todo",
+        parentTaskId,
+        subtasksExpanded: false,
+        createdAt: Date.now(),
+        clearedAt: null,
+        order: Math.max(-1, ...siblingOrders) + 1,
+      };
+
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((candidate) =>
+            candidate.id === stickyId
+              ? {
+                  ...candidate,
+                  items: candidate.items
+                    .map((item) =>
+                      item.id === parentTaskId
+                        ? { ...item, subtasksExpanded: true }
+                        : item,
+                    )
+                    .concat(task),
+                }
+              : candidate,
+          ),
+        }),
+        { action: "addTask", payload: { stickyId, task } },
+      );
+      enqueueMutation({
+        action: "setTaskExpanded",
+        payload: { stickyId, taskId: parentTaskId, expanded: true },
+      });
+      void trackProductEvent("task_created", {
+        is_subtask: true,
+        subtasks_count_after: siblingOrders.length + 1,
+      });
+    },
+    [applyLocalMutation, enqueueMutation, state.blocks, trackProductEvent],
+  );
+
+  const setItemExpanded = useCallback(
+    (stickyId: string, taskId: string, expanded: boolean) => {
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          blocks: prev.blocks.map((sticky) =>
+            sticky.id === stickyId
+              ? {
+                  ...sticky,
+                  items: sticky.items.map((task) =>
+                    task.id === taskId
+                      ? { ...task, subtasksExpanded: expanded }
+                      : task,
+                  ),
+                }
+              : sticky,
+          ),
+        }),
+        {
+          action: "setTaskExpanded",
+          payload: { stickyId, taskId, expanded },
+        },
+      );
+    },
+    [applyLocalMutation],
   );
 
   const updateItemText = useCallback(
@@ -1073,10 +1173,21 @@ export function useTodoStore() {
 
   const toggleItemStatus = useCallback(
     (stickyId: string, taskId: string) => {
-      const task = state.blocks
-        .find((sticky) => sticky.id === stickyId)
-        ?.items.find((candidate) => candidate.id === taskId);
+      const sticky = state.blocks.find((candidate) => candidate.id === stickyId);
+      const task = sticky?.items.find((candidate) => candidate.id === taskId);
       if (!task) return;
+      if (
+        task.status === "todo" &&
+        !task.parentTaskId &&
+        sticky?.items.some(
+          (candidate) =>
+            candidate.parentTaskId === task.id &&
+            !candidate.clearedAt &&
+            candidate.status === "todo",
+        )
+      ) {
+        return;
+      }
       setItemStatus(stickyId, taskId, task.status === "todo" ? "completed" : "todo");
     },
     [setItemStatus, state.blocks],
@@ -1089,20 +1200,17 @@ export function useTodoStore() {
     [setItemStatus],
   );
 
-  const undoDeleteItem = useCallback(
-    (stickyId: string, taskId: string) => {
-      setItemStatus(stickyId, taskId, "todo");
-    },
-    [setItemStatus],
-  );
-
   const clearAndArchive = useCallback(() => {
     const clearedAt = Date.now();
     const archivedCount = state.blocks.reduce(
       (count, sticky) =>
         count +
-        sticky.items.filter((task) => task.status !== "todo" && !task.clearedAt)
-          .length,
+        sticky.items.filter(
+          (task) =>
+            !task.clearedAt &&
+            ((!task.parentTaskId && task.status !== "todo") ||
+              (Boolean(task.parentTaskId) && task.status === "deleted")),
+        ).length,
       0,
     );
     applyLocalMutation(
@@ -1111,7 +1219,9 @@ export function useTodoStore() {
         blocks: prev.blocks.map((sticky) => ({
           ...sticky,
           items: sticky.items.map((task) =>
-            task.status !== "todo" && !task.clearedAt
+            !task.clearedAt &&
+            ((!task.parentTaskId && task.status !== "todo") ||
+              (Boolean(task.parentTaskId) && task.status === "deleted"))
               ? { ...task, clearedAt }
               : task,
           ),
@@ -1131,7 +1241,10 @@ export function useTodoStore() {
       const sticky = state.blocks.find((candidate) => candidate.id === stickyId);
       const archivedCount =
         sticky?.items.filter(
-          (task) => task.status !== "todo" && !task.clearedAt,
+          (task) =>
+            !task.clearedAt &&
+            ((!task.parentTaskId && task.status !== "todo") ||
+              (Boolean(task.parentTaskId) && task.status === "deleted")),
         ).length ?? 0;
       applyLocalMutation(
         (prev) => ({
@@ -1141,7 +1254,9 @@ export function useTodoStore() {
               ? {
                   ...sticky,
                   items: sticky.items.map((task) =>
-                    task.status !== "todo" && !task.clearedAt
+                    !task.clearedAt &&
+                    ((!task.parentTaskId && task.status !== "todo") ||
+                      (Boolean(task.parentTaskId) && task.status === "deleted"))
                       ? { ...task, clearedAt }
                       : task,
                   ),
@@ -1172,16 +1287,24 @@ export function useTodoStore() {
             sticky.id === stickyId
               ? {
                   ...sticky,
-                  items: sticky.items.map((task) =>
-                    task.id === taskId
+                  items: sticky.items.map((task) => {
+                    const restoredTask = sticky.items.find(
+                      (candidate) => candidate.id === taskId,
+                    );
+                    const shouldRestoreParent =
+                      restoredTask?.parentTaskId === task.id;
+                    return task.id === taskId || shouldRestoreParent
                       ? {
                           ...task,
-                          status: "todo",
+                          status: "todo" as const,
                           clearedAt: null,
-                          order,
+                          order: task.id === taskId ? order : task.order,
+                          subtasksExpanded: shouldRestoreParent
+                            ? true
+                            : task.subtasksExpanded,
                         }
-                      : task,
-                  ),
+                      : task;
+                  }),
                 }
               : sticky,
           ),
@@ -1203,7 +1326,11 @@ export function useTodoStore() {
           ...prev,
           blocks: prev.blocks.map((sticky) => ({
             ...sticky,
-            items: sticky.items.filter((task) => !taskIdSet.has(task.id)),
+            items: sticky.items.filter(
+              (task) =>
+                !taskIdSet.has(task.id) &&
+                !(task.parentTaskId && taskIdSet.has(task.parentTaskId)),
+            ),
           })),
         }),
         {
@@ -1491,10 +1618,11 @@ export function useTodoStore() {
     reorderItems,
     moveItem,
     addItem,
+    addSubtask,
+    setItemExpanded,
     updateItemText,
     toggleItemStatus,
     softDeleteItem,
-    undoDeleteItem,
     clearAndArchive,
     clearStickyArchivedTasks,
     restoreTaskToTodo,

@@ -20,6 +20,7 @@ interface HistoryPageProps {
 interface TaskEntry {
   sticky: TodoBlock;
   task: TodoItem;
+  parentTask?: TodoItem;
   time: number;
 }
 
@@ -79,13 +80,14 @@ function bucketCount(bucket: BucketContent) {
 }
 
 function groupBySticky(entries: TaskEntry[]) {
-  const groups = new Map<string, { sticky: TodoBlock; tasks: TodoItem[] }>();
-  entries.forEach(({ sticky, task }) => {
+  const groups = new Map<string, { sticky: TodoBlock; entries: TaskEntry[] }>();
+  entries.forEach((entry) => {
+    const { sticky } = entry;
     const group = groups.get(sticky.id);
     if (group) {
-      group.tasks.push(task);
+      group.entries.push(entry);
     } else {
-      groups.set(sticky.id, { sticky, tasks: [task] });
+      groups.set(sticky.id, { sticky, entries: [entry] });
     }
   });
   return Array.from(groups.values());
@@ -112,6 +114,18 @@ export function HistoryPage({
     message: string;
     onConfirm: () => void;
   } | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<TaskEntry[] | null>(null);
+
+  const restoreEntries = (entries: TaskEntry[]) => {
+    const reopensParent = entries.some(
+      (entry) => entry.parentTask && entry.parentTask.status !== "todo",
+    );
+    if (reopensParent) {
+      setPendingRestore(entries);
+      return;
+    }
+    entries.forEach((entry) => onRestoreTask(entry.sticky.id, entry.task.id));
+  };
 
   const buckets = useMemo(() => {
     const next: Record<BucketKey, BucketContent> = {
@@ -124,7 +138,17 @@ export function HistoryPage({
     state.blocks.forEach((sticky) => {
       sticky.items.forEach((task) => {
         if (task.status !== "completed" && task.status !== "deleted") return;
-        const entry = { sticky, task, time: task.order || task.createdAt };
+        const parentTask = task.parentTaskId
+          ? sticky.items.find((candidate) => candidate.id === task.parentTaskId)
+          : undefined;
+        if (task.parentTaskId && task.status !== "deleted") return;
+        if (parentTask?.status === "deleted") return;
+        const entry = {
+          sticky,
+          task,
+          parentTask,
+          time: task.order || task.createdAt,
+        };
         const bucket = next[getBucketKey(entry.time)];
         if (task.status === "completed") bucket.completedTasks.push(entry);
         if (task.status === "deleted") bucket.deletedTasks.push(entry);
@@ -239,14 +263,14 @@ export function HistoryPage({
               <TaskSection
                 title="Completed tasks"
                 entries={bucket.completedTasks}
-                onRestoreTask={onRestoreTask}
+                onRestoreEntries={restoreEntries}
                 onDeleteTasks={onDeleteTasks}
                 onRequestDelete={setPendingDelete}
               />
               <TaskSection
                 title="Deleted tasks"
                 entries={bucket.deletedTasks}
-                onRestoreTask={onRestoreTask}
+                onRestoreEntries={restoreEntries}
                 onDeleteTasks={onDeleteTasks}
                 onRequestDelete={setPendingDelete}
               />
@@ -367,6 +391,27 @@ export function HistoryPage({
       )}
 
       <ConfirmModal
+        open={Boolean(pendingRestore)}
+        title="Reopen parent task?"
+        message={
+          pendingRestore
+            ? `Restoring ${pendingRestore.length === 1 ? `“${pendingRestore[0].task.text}”` : "these subtasks"} will also reopen ${
+                pendingRestore.length === 1 && pendingRestore[0].parentTask
+                  ? `“${pendingRestore[0].parentTask.text}”`
+                  : "their completed parent tasks"
+              }.`
+            : ""
+        }
+        confirmLabel="Reopen and restore"
+        onConfirm={() => {
+          pendingRestore?.forEach((entry) =>
+            onRestoreTask(entry.sticky.id, entry.task.id),
+          );
+          setPendingRestore(null);
+        }}
+        onCancel={() => setPendingRestore(null)}
+      />
+      <ConfirmModal
         open={Boolean(pendingDelete)}
         title={pendingDelete?.title ?? ""}
         message={pendingDelete?.message ?? ""}
@@ -384,13 +429,13 @@ export function HistoryPage({
 function TaskSection({
   title,
   entries,
-  onRestoreTask,
+  onRestoreEntries,
   onDeleteTasks,
   onRequestDelete,
 }: {
   title: string;
   entries: TaskEntry[];
-  onRestoreTask: (stickyId: string, taskId: string) => void;
+  onRestoreEntries: (entries: TaskEntry[]) => void;
   onDeleteTasks: (taskIds: string[]) => void;
   onRequestDelete: (request: {
     title: string;
@@ -444,19 +489,15 @@ function TaskSection({
                       {group.sticky.title}
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                      {group.tasks.length} task
-                      {group.tasks.length === 1 ? "" : "s"}
+                      {group.entries.length} task
+                      {group.entries.length === 1 ? "" : "s"}
                     </p>
                   </div>
                   <div className="flex flex-shrink-0 gap-1">
                     <HistoryIconButton
                       compact
                       label={`Recover ${group.sticky.title}`}
-                      onClick={() =>
-                        group.tasks.forEach((task) =>
-                          onRestoreTask(group.sticky.id, task.id),
-                        )
-                      }
+                      onClick={() => onRestoreEntries(group.entries)}
                     >
                       <Undo2 className="h-3.5 w-3.5" />
                     </HistoryIconButton>
@@ -470,7 +511,9 @@ function TaskSection({
                           message:
                             "Permanently delete these tasks? This can never be recovered.",
                           onConfirm: () =>
-                            onDeleteTasks(group.tasks.map((task) => task.id)),
+                            onDeleteTasks(
+                              group.entries.map((entry) => entry.task.id),
+                            ),
                         })
                       }
                     >
@@ -479,45 +522,75 @@ function TaskSection({
                   </div>
                 </div>
                 <div className="mt-2 flex flex-col gap-1">
-                  {group.tasks.map((task) => (
+                  {group.entries.map((entry) => {
+                    const { task, parentTask } = entry;
+                    const nestedSubtasks = group.sticky.items
+                      .filter((candidate) => {
+                        if (candidate.parentTaskId !== task.id) return false;
+                        return task.status === "deleted"
+                          ? true
+                          : candidate.status === "completed";
+                      })
+                      .sort((a, b) => a.order - b.order);
+                    return (
                     <div
                       key={task.id}
-                      className="flex items-start justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-card"
+                      className="rounded-md px-2 py-1.5 hover:bg-card"
                     >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm text-foreground">
-                          {task.text}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatDate(task.order || task.createdAt)}
-                        </p>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className={`truncate text-sm ${task.status === "deleted" ? "line-through text-muted-foreground" : "text-foreground"}`}>
+                            {task.text}
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {parentTask ? `Subtask of “${parentTask.text}” · ` : ""}
+                            {formatDate(task.order || task.createdAt)}
+                          </p>
+                        </div>
+                        <div className="flex flex-shrink-0 gap-0.5">
+                          <HistoryIconButton
+                            compact
+                            label={`Recover ${task.text}`}
+                            onClick={() => onRestoreEntries([entry])}
+                          >
+                            <Undo2 className="h-3.5 w-3.5" />
+                          </HistoryIconButton>
+                          <HistoryIconButton
+                            compact
+                            label={`Delete ${task.text} permanently`}
+                            destructive
+                            onClick={() =>
+                              onRequestDelete({
+                                title: "Delete Task Permanently?",
+                                message:
+                                  "Permanently delete this task? This can never be recovered.",
+                                onConfirm: () => onDeleteTasks([task.id]),
+                              })
+                            }
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </HistoryIconButton>
+                        </div>
                       </div>
-                      <div className="flex flex-shrink-0 gap-0.5">
-                        <HistoryIconButton
-                          compact
-                          label={`Recover ${task.text}`}
-                          onClick={() => onRestoreTask(group.sticky.id, task.id)}
-                        >
-                          <Undo2 className="h-3.5 w-3.5" />
-                        </HistoryIconButton>
-                        <HistoryIconButton
-                          compact
-                          label={`Delete ${task.text} permanently`}
-                          destructive
-                          onClick={() =>
-                            onRequestDelete({
-                              title: "Delete Task Permanently?",
-                              message:
-                                "Permanently delete this task? This can never be recovered.",
-                              onConfirm: () => onDeleteTasks([task.id]),
-                            })
-                          }
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </HistoryIconButton>
-                      </div>
+                      {nestedSubtasks.length > 0 && (
+                        <div className="mt-1 border-l border-border pl-3">
+                          {nestedSubtasks.map((subtask) => (
+                            <p
+                              key={subtask.id}
+                              className={`truncate py-0.5 text-xs ${
+                                subtask.status === "completed"
+                                  ? "line-through text-muted-foreground"
+                                  : "text-muted-foreground"
+                              }`}
+                            >
+                              {subtask.text}
+                            </p>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}
