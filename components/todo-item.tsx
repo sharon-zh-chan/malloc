@@ -138,13 +138,13 @@ function SubtaskRow({
         transition,
         opacity: isDragging ? 0.5 : 1,
       }}
-      className="group/subtask flex min-w-0 items-center gap-2 rounded-md py-1 pl-2 pr-1 transition-colors hover:bg-card/80"
+      className="group/subtask relative flex min-w-0 items-center gap-2 rounded-md py-1 pr-1 transition-colors hover:bg-card/80"
     >
       <button
         {...attributes}
         {...listeners}
         disabled={readOnly}
-        className="flex-shrink-0 cursor-grab touch-none p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/subtask:opacity-100 focus:opacity-100 disabled:pointer-events-none disabled:opacity-0"
+        className="absolute -left-6 top-1/2 flex-shrink-0 -translate-y-1/2 cursor-grab touch-none p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/subtask:opacity-100 focus:opacity-100 disabled:pointer-events-none disabled:opacity-0"
         aria-label={`Reorder subtask ${item.text}`}
         title="Reorder within this task"
       >
@@ -154,7 +154,7 @@ function SubtaskRow({
         type="button"
         onClick={onToggle}
         disabled={readOnly}
-        className="flex-shrink-0 p-0.5 text-primary transition-colors hover:text-primary/80 disabled:cursor-default"
+        className="flex-shrink-0 text-primary transition-colors hover:text-primary/80 disabled:cursor-default"
         aria-label={
           item.status === "completed"
             ? `Mark subtask ${item.text} as todo`
@@ -296,36 +296,19 @@ export function TodoItemRow({
       className="min-w-0"
     >
       <div
-        className={`group flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-card/80 ${
+        className={`group relative flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-card/80 ${
           item.status === "deleted" ? "opacity-55" : ""
         }`}
       >
         <button
           {...attributes}
           {...listeners}
-          className="flex-shrink-0 cursor-grab touch-none p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 active:cursor-grabbing"
+          className="absolute -left-4 top-1/2 flex-shrink-0 -translate-y-1/2 cursor-grab touch-none p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 active:cursor-grabbing"
           aria-label={`Drag ${item.text}`}
           title="Drag to move task"
         >
           <GripVertical className="h-4 w-4" />
         </button>
-
-        {hasSubtasks ? (
-          <button
-            type="button"
-            onClick={() => onSetExpanded(!item.subtasksExpanded)}
-            className="flex-shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
-            aria-label={`${item.subtasksExpanded ? "Collapse" : "Expand"} subtasks for ${item.text}`}
-          >
-            {item.subtasksExpanded ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
-          </button>
-        ) : (
-          <span className="w-5 flex-shrink-0" aria-hidden="true" />
-        )}
 
         {item.status === "deleted" ? (
           <span className="flex-shrink-0 p-0.5 text-muted-foreground">
@@ -352,10 +335,25 @@ export function TodoItemRow({
 
         <EditableTaskText item={item} readOnly={isReadOnly} onUpdateText={onUpdateText} />
 
-        {!item.subtasksExpanded && visibleSubtasks.length > 0 && (
+        {visibleSubtasks.length > 0 && (
           <span className="flex-shrink-0 text-xs tabular-nums text-muted-foreground">
             {completedCount}/{visibleSubtasks.length}
           </span>
+        )}
+
+        {hasSubtasks && (
+          <button
+            type="button"
+            onClick={() => onSetExpanded(!item.subtasksExpanded)}
+            className="flex-shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
+            aria-label={`${item.subtasksExpanded ? "Collapse" : "Expand"} subtasks for ${item.text}`}
+          >
+            {item.subtasksExpanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </button>
         )}
 
         {item.status === "todo" && (
@@ -396,13 +394,13 @@ export function TodoItemRow({
       </div>
 
       {completionMessage && (
-        <p className="ml-[5.75rem] pr-2 text-xs text-destructive" role="status">
+        <p className="ml-10 pr-2 text-xs text-destructive" role="status">
           {completionMessage}
         </p>
       )}
 
       {item.subtasksExpanded && (hasSubtasks || showAddInput) && (
-        <div className="ml-[2.15rem] border-l border-border pl-3">
+        <div className="ml-10">
           <SortableContext
             items={displaySubtasks.map((subtask) => subtask.id)}
             strategy={verticalListSortingStrategy}
@@ -424,8 +422,7 @@ export function TodoItemRow({
           </SortableContext>
 
           {showAddInput && item.status === "todo" && (
-            <div className="flex items-center gap-2 py-1 pl-2 pr-1">
-              <span className="w-4 flex-shrink-0" aria-hidden="true" />
+            <div className="flex items-center gap-2 py-1 pr-1">
               <Circle className="h-4 w-4 flex-shrink-0 text-muted-foreground/60" />
               <input
                 ref={newSubtaskRef}
