@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useMemo } from "react";
-import type { TodoBlock as TodoBlockType } from "@/lib/types";
-import { TodoItemRow } from "./todo-item";
+import type { TodoBlock as TodoBlockType, TodoItem } from "@/lib/types";
+import { DeletedSubtaskRow, TodoItemRow } from "./todo-item";
 import {
   Plus,
   ChevronUp,
@@ -24,6 +24,8 @@ interface TodoBlockProps {
   isLast: boolean;
   onUpdateTitle: (title: string) => void;
   onAddItem: (text: string) => void;
+  onAddSubtask: (parentTaskId: string, text: string) => void;
+  onSetItemExpanded: (itemId: string, expanded: boolean) => void;
   onToggleItem: (itemId: string) => void;
   onDeleteItem: (itemId: string) => void;
   onUndoItem: (itemId: string) => void;
@@ -41,6 +43,8 @@ export function TodoBlockCard({
   isLast,
   onUpdateTitle,
   onAddItem,
+  onAddSubtask,
+  onSetItemExpanded,
   onToggleItem,
   onDeleteItem,
   onUndoItem,
@@ -57,6 +61,10 @@ export function TodoBlockCard({
   const [showAddInput, setShowAddInput] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
+  const [pendingSubtaskRestore, setPendingSubtaskRestore] = useState<{
+    subtask: TodoItem;
+    parent: TodoItem;
+  } | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const newItemRef = useRef<HTMLInputElement>(null);
 
@@ -108,16 +116,26 @@ export function TodoBlockCard({
   };
 
   const groupedItems = useMemo(() => {
-    const todo = block.items
+    const topLevelItems = block.items.filter((item) => !item.parentTaskId);
+    const todo = topLevelItems
       .filter((i) => i.status === "todo")
       .sort((a, b) => a.order - b.order);
-    const completed = block.items
+    const completed = topLevelItems
       .filter((i) => i.status === "completed")
       .sort((a, b) => a.order - b.order);
-    const deleted = block.items
+    const deleted = topLevelItems
       .filter((i) => i.status === "deleted")
       .sort((a, b) => a.order - b.order);
-    return { todo, completed, deleted };
+    const deletedSubtasks = block.items
+      .filter((item) => {
+        if (!item.parentTaskId || item.status !== "deleted") return false;
+        const parent = topLevelItems.find(
+          (candidate) => candidate.id === item.parentTaskId,
+        );
+        return parent?.status !== "deleted";
+      })
+      .sort((a, b) => b.order - a.order);
+    return { todo, completed, deleted, deletedSubtasks };
   }, [block.items]);
 
   const renderedItemIds = useMemo(
@@ -131,7 +149,29 @@ export function TodoBlockCard({
 
   const hasCompleted = groupedItems.completed.length > 0;
   const hasDeleted = groupedItems.deleted.length > 0;
-  const canClearTasks = hasCompleted || hasDeleted;
+  const hasDeletedSubtasks = groupedItems.deletedSubtasks.length > 0;
+  const canClearTasks = hasCompleted || hasDeleted || hasDeletedSubtasks;
+
+  const subtasksFor = (itemId: string) =>
+    block.items.filter((item) => item.parentTaskId === itemId);
+
+  const renderTask = (item: TodoItem) => (
+    <TodoItemRow
+      key={item.id}
+      item={item}
+      subtasks={subtasksFor(item.id)}
+      stickyId={block.id}
+      onToggle={() => onToggleItem(item.id)}
+      onDelete={() => onDeleteItem(item.id)}
+      onUndo={() => onUndoItem(item.id)}
+      onUpdateText={(text) => onUpdateItemText(item.id, text)}
+      onAddSubtask={(text) => onAddSubtask(item.id, text)}
+      onToggleSubtask={onToggleItem}
+      onDeleteSubtask={onDeleteItem}
+      onUpdateSubtaskText={onUpdateItemText}
+      onSetExpanded={(expanded) => onSetItemExpanded(item.id, expanded)}
+    />
+  );
 
   return (
     <div
@@ -259,17 +299,7 @@ export function TodoBlockCard({
       >
         <div className="flex flex-col gap-0.5">
           {/* Todo items - draggable */}
-          {groupedItems.todo.map((item) => (
-            <TodoItemRow
-              key={item.id}
-              item={item}
-              stickyId={block.id}
-              onToggle={() => onToggleItem(item.id)}
-              onDelete={() => onDeleteItem(item.id)}
-              onUndo={() => onUndoItem(item.id)}
-              onUpdateText={(text) => onUpdateItemText(item.id, text)}
-            />
-          ))}
+          {groupedItems.todo.map(renderTask)}
 
           {/* Gap between todo and completed */}
           {hasCompleted && groupedItems.todo.length > 0 && (
@@ -280,51 +310,66 @@ export function TodoBlockCard({
           {hasCompleted && (
             <div className="flex flex-col gap-0.5">
               <p className="brand-label px-2 pb-1">Completed</p>
-              {groupedItems.completed.map((item) => (
-                <TodoItemRow
-                  key={item.id}
-                  item={item}
-                  stickyId={block.id}
-                  onToggle={() => onToggleItem(item.id)}
-                  onDelete={() => onDeleteItem(item.id)}
-                  onUndo={() => onUndoItem(item.id)}
-                  onUpdateText={(text) => onUpdateItemText(item.id, text)}
-                />
-              ))}
+              {groupedItems.completed.map(renderTask)}
             </div>
           )}
 
           {/* Gap between completed and deleted */}
-          {hasDeleted && (hasCompleted || groupedItems.todo.length > 0) && (
+          {(hasDeleted || hasDeletedSubtasks) &&
+            (hasCompleted || groupedItems.todo.length > 0) && (
             <div className="h-3" aria-hidden="true" />
           )}
 
           {/* Deleted items */}
-          {hasDeleted && (
+          {(hasDeleted || hasDeletedSubtasks) && (
             <div className="flex flex-col gap-0.5">
               <p className="brand-label px-2 pb-1">Deleted</p>
-              {groupedItems.deleted.map((item) => (
-                <TodoItemRow
-                  key={item.id}
-                  item={item}
-                  stickyId={block.id}
-                  onToggle={() => onToggleItem(item.id)}
-                  onDelete={() => onDeleteItem(item.id)}
-                  onUndo={() => onUndoItem(item.id)}
-                  onUpdateText={(text) => onUpdateItemText(item.id, text)}
-                />
-              ))}
+              {groupedItems.deleted.map(renderTask)}
+              {groupedItems.deletedSubtasks.map((subtask) => {
+                const parent = block.items.find(
+                  (item) => item.id === subtask.parentTaskId,
+                );
+                if (!parent) return null;
+                return (
+                  <DeletedSubtaskRow
+                    key={subtask.id}
+                    item={subtask}
+                    parentText={parent.text}
+                    onUndo={() => {
+                      if (parent.status === "todo") onUndoItem(subtask.id);
+                      else setPendingSubtaskRestore({ subtask, parent });
+                    }}
+                  />
+                );
+              })}
             </div>
           )}
 
           {/* Empty state */}
-          {block.items.length === 0 && !showAddInput && (
+          {renderedItemIds.length === 0 && !showAddInput && (
             <p className="text-sm text-muted-foreground italic text-center py-4">
               No tasks yet. Click + to add one.
             </p>
           )}
         </div>
       </SortableContext>
+      <ConfirmModal
+        open={Boolean(pendingSubtaskRestore)}
+        title="Reopen parent task?"
+        message={
+          pendingSubtaskRestore
+            ? `Reopen “${pendingSubtaskRestore.parent.text}” and restore “${pendingSubtaskRestore.subtask.text}”?`
+            : ""
+        }
+        confirmLabel="Reopen and restore"
+        onConfirm={() => {
+          if (pendingSubtaskRestore) {
+            onUndoItem(pendingSubtaskRestore.subtask.id);
+          }
+          setPendingSubtaskRestore(null);
+        }}
+        onCancel={() => setPendingSubtaskRestore(null)}
+      />
       <ConfirmModal
         open={showCleanupConfirm}
         title="Clear completed and deleted tasks?"

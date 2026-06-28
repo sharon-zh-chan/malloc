@@ -31,25 +31,51 @@ import {
 const LOGOUT_REDIRECT_KEY = "malloc_logout_redirect_pending";
 
 type DragData = {
-  type?: "sticky" | "task";
+  type?: "sticky" | "task" | "subtask";
   stickyId?: string;
+  parentTaskId?: string;
   status?: TodoItem["status"];
 };
 
 const taskStatuses = ["todo", "completed", "deleted"] as const;
 
 function getGroupedTasks(items: TodoItem[]) {
+  const topLevelItems = items.filter((item) => !item.parentTaskId);
   return {
-    todo: items
+    todo: topLevelItems
       .filter((item) => item.status === "todo")
       .sort((a, b) => a.order - b.order),
-    completed: items
+    completed: topLevelItems
       .filter((item) => item.status === "completed")
       .sort((a, b) => a.order - b.order),
-    deleted: items
+    deleted: topLevelItems
       .filter((item) => item.status === "deleted")
       .sort((a, b) => a.order - b.order),
   };
+}
+
+function flattenTasksWithSubtasks(
+  items: TodoItem[],
+  orderedParents: TodoItem[],
+  childOverride?: { parentTaskId: string; children: TodoItem[] },
+) {
+  const knownIds = new Set<string>();
+  const flattened = orderedParents.flatMap((parent) => {
+    knownIds.add(parent.id);
+    const children =
+      childOverride?.parentTaskId === parent.id
+        ? childOverride.children
+        : items
+            .filter((item) => item.parentTaskId === parent.id)
+            .sort((a, b) => a.order - b.order);
+    children.forEach((child) => knownIds.add(child.id));
+    return [parent, ...children];
+  });
+
+  return [
+    ...flattened,
+    ...items.filter((item) => !knownIds.has(item.id)),
+  ];
 }
 
 function LoadingWorkspace() {
@@ -81,10 +107,11 @@ export function Dashboard() {
     reorderItems,
     moveItem,
     addItem,
+    addSubtask,
+    setItemExpanded,
     updateItemText,
     toggleItemStatus,
     softDeleteItem,
-    undoDeleteItem,
     clearAndArchive,
     clearStickyArchivedTasks,
     restoreTaskToTodo,
@@ -182,6 +209,61 @@ export function Dashboard() {
     );
   };
 
+  const handleSubtaskDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const activeData = active.data.current as DragData | undefined;
+    const overData = over.data.current as DragData | undefined;
+    if (
+      activeData?.type !== "subtask" ||
+      overData?.type !== "subtask" ||
+      !activeData.stickyId ||
+      !activeData.parentTaskId ||
+      activeData.stickyId !== overData.stickyId ||
+      activeData.parentTaskId !== overData.parentTaskId
+    ) {
+      return;
+    }
+
+    const sticky = state.blocks.find(
+      (block) => block.id === activeData.stickyId,
+    );
+    if (!sticky) return;
+
+    const siblings = sticky.items
+      .filter(
+        (item) =>
+          item.parentTaskId === activeData.parentTaskId &&
+          !item.clearedAt &&
+          item.status !== "deleted",
+      )
+      .sort((a, b) => a.order - b.order);
+    const oldIndex = siblings.findIndex((item) => item.id === String(active.id));
+    const newIndex = siblings.findIndex((item) => item.id === String(over.id));
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reorderedSiblings = arrayMove(siblings, oldIndex, newIndex);
+    const groupedTasks = getGroupedTasks(sticky.items);
+    const orderedParents = taskStatuses.flatMap((status) => groupedTasks[status]);
+    reorderItems(
+      sticky.id,
+      flattenTasksWithSubtasks(sticky.items, orderedParents, {
+        parentTaskId: activeData.parentTaskId,
+        children: [
+          ...reorderedSiblings,
+          ...sticky.items
+            .filter(
+              (item) =>
+                item.parentTaskId === activeData.parentTaskId &&
+                (item.clearedAt || item.status === "deleted"),
+            )
+            .sort((a, b) => a.order - b.order),
+        ],
+      }),
+    );
+  };
+
   const handleTaskDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     const activeData = active.data.current as DragData | undefined;
@@ -214,10 +296,13 @@ export function Dashboard() {
     if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
 
     const reorderedStatusTasks = arrayMove(statusTasks, oldIndex, newIndex);
-    const newItems = taskStatuses.flatMap((status) =>
+    const orderedParents = taskStatuses.flatMap((status) =>
       status === activeTask.status ? reorderedStatusTasks : groupedTasks[status],
     );
-    reorderItems(fromStickyId, newItems);
+    reorderItems(
+      fromStickyId,
+      flattenTasksWithSubtasks(sticky.items, orderedParents),
+    );
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -225,6 +310,11 @@ export function Dashboard() {
     const activeData = active.data.current as DragData | undefined;
 
     setTaskDropTargetStickyId(null);
+
+    if (activeData?.type === "subtask") {
+      handleSubtaskDragEnd(event);
+      return;
+    }
 
     if (activeData?.type === "task") {
       handleTaskDragEnd(event);
@@ -393,13 +483,19 @@ export function Dashboard() {
                         updateBlockTitle(block.id, title)
                       }
                       onAddItem={(text) => addItem(block.id, text)}
+                      onAddSubtask={(parentTaskId, text) =>
+                        addSubtask(block.id, parentTaskId, text)
+                      }
+                      onSetItemExpanded={(itemId, expanded) =>
+                        setItemExpanded(block.id, itemId, expanded)
+                      }
                       onToggleItem={(itemId) =>
                         toggleItemStatus(block.id, itemId)
                       }
                       onDeleteItem={(itemId) =>
                         softDeleteItem(block.id, itemId)
                       }
-                      onUndoItem={(itemId) => undoDeleteItem(block.id, itemId)}
+                      onUndoItem={(itemId) => restoreTaskToTodo(block.id, itemId)}
                       onUpdateItemText={(itemId, text) =>
                         updateItemText(block.id, itemId, text)
                       }

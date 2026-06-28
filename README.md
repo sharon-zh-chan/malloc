@@ -70,7 +70,7 @@ curl -X POST http://localhost:3000/api/mutations \
 ```
 
 Each `client_mutation_id` is an idempotency key. Supported actions include
-`addSticky`, `reorderStickies`, `addTask`, `setTaskStatus`, `moveTask`,
+`addSticky`, `reorderStickies`, `addTask`, `setTaskExpanded`, `setTaskStatus`, `moveTask`,
 `reorderTasks`, `clearStickyArchivedTasks`,
 `addMemo`, `editMemo`, `archiveMemo`, and notepad collection operations.
 
@@ -105,6 +105,10 @@ For a safe production rollout:
 If `scripts/003_add_action_shaped_persistence.sql` was applied before the
 mutation conflict fix, apply `scripts/005_fix_workspace_mutation_conflict.sql`
 once before testing writes.
+
+Apply `scripts/010_add_subtasks.sql` before deploying the subtask UI. Subtasks
+use `addTask` with a `parentTaskId`; the migration keeps them attached to their
+parent during cross-sticky moves, restoration, and permanent deletion.
 
 ## Learn More
 
