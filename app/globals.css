@@ -183,3 +183,78 @@
   content: attr(data-placeholder);
   color: hsl(var(--muted-foreground) / 0.5);
 }
+
+.notepad-print-title {
+  display: none;
+}
+
+@page {
+  margin: 18mm;
+}
+
+@media print {
+  body.notepad-printing {
+    background: white !important;
+  }
+
+  body.notepad-printing * {
+    visibility: hidden;
+  }
+
+  body.notepad-printing .notepad-print-sheet,
+  body.notepad-printing .notepad-print-sheet * {
+    visibility: visible;
+  }
+
+  body.notepad-printing .notepad-print-sheet {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    min-height: 0;
+    border: 0;
+    background: white;
+    color: black;
+    padding: 0;
+  }
+
+  body.notepad-printing .notepad-print-controls {
+    display: none !important;
+  }
+
+  body.notepad-printing .notepad-print-title {
+    display: block;
+    margin: 0 0 1.25rem;
+    border-bottom: 1px solid #d1d5db;
+    padding-bottom: 0.75rem;
+    color: black;
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  body.notepad-printing .rich-text-editor {
+    display: block;
+    min-height: 0;
+    margin: 0;
+    background: transparent;
+    color: black;
+    padding: 0;
+    outline: none;
+  }
+
+  body.notepad-printing .rich-text-editor:empty::before {
+    content: none;
+  }
+
+  body.notepad-printing .rich-text-editor table,
+  body.notepad-printing .rich-text-editor tr,
+  body.notepad-printing .rich-text-editor img {
+    break-inside: avoid;
+  }
+
+  body.notepad-printing .rich-text-editor td,
+  body.notepad-printing .rich-text-editor th {
+    border-color: #6b7280;
+  }
+}
