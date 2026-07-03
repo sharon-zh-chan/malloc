@@ -18,6 +18,7 @@ import {
   Menu,
   Pencil,
   Plus,
+  Printer,
   SquareMinus,
   SquarePlus,
   Table2,
@@ -712,6 +713,30 @@ function TextBlockEditor({
     }
   }, [block.content]);
 
+  useEffect(() => {
+    let previousDocumentTitle = document.title;
+
+    const prepareNoteForPrint = () => {
+      previousDocumentTitle = document.title;
+      document.title = `${block.title} | malloc`;
+      document.body.classList.add("notepad-printing");
+    };
+
+    const restorePageAfterPrint = () => {
+      document.body.classList.remove("notepad-printing");
+      document.title = previousDocumentTitle;
+    };
+
+    window.addEventListener("beforeprint", prepareNoteForPrint);
+    window.addEventListener("afterprint", restorePageAfterPrint);
+
+    return () => {
+      window.removeEventListener("beforeprint", prepareNoteForPrint);
+      window.removeEventListener("afterprint", restorePageAfterPrint);
+      restorePageAfterPrint();
+    };
+  }, [block.title]);
+
   const selectionIsInEditor = (selection: Selection | null) => {
     const editor = editorRef.current;
     if (!editor || !selection?.rangeCount) return false;
@@ -1139,8 +1164,9 @@ function TextBlockEditor({
   });
 
   return (
-    <section className="sketchy-card p-4 min-h-[520px] flex flex-col">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <section className="notepad-print-sheet sketchy-card p-4 min-h-[520px] flex flex-col">
+      <h1 className="notepad-print-title">{block.title}</h1>
+      <div className="notepad-print-controls flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <TitleEditor
           title={block.title}
           onUpdateTitle={onUpdateTitle}
@@ -1157,6 +1183,15 @@ function TextBlockEditor({
             onArchive={onArchive}
             compact
           />
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground/80 hover:bg-primary/10 hover:text-foreground transition-colors"
+            aria-label="Print note"
+            title="Print or save as PDF"
+          >
+            <Printer className="h-4 w-4" />
+          </button>
           {block.archivedAt ? (
             <>
               <button
@@ -1192,7 +1227,7 @@ function TextBlockEditor({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-1 border-y border-primary/20 py-2">
+      <div className="notepad-print-controls mt-3 flex flex-wrap items-center gap-1 border-y border-primary/20 py-2">
         <select
           aria-label="Font"
           title="Font"
