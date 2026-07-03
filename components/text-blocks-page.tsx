@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import type { MemoCollection, TextBlock } from "@/lib/types";
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   Bold,
   Check,
   ChevronDown,
   ChevronRight,
   FolderPlus,
-  Heading2,
   Italic,
   List,
   ListOrdered,
@@ -22,12 +24,20 @@ import {
   TableColumnsSplit,
   TableRowsSplit,
   Trash2,
-  Type,
+  Strikethrough,
+  Underline,
   Undo2,
   X,
 } from "lucide-react";
 import { MemoCollectionPicker } from "./memo-collection-picker";
 import { ConfirmModal } from "./confirm-modal";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 
 interface TextBlocksPageProps {
   blocks: TextBlock[];
@@ -52,12 +62,55 @@ const ARCHIVE_LABEL = "Deleted";
 const UNFILED_COLLECTION_KEY = "__unfiled";
 const ARCHIVE_COLLECTION_KEY = "__archive";
 const FONT_SIZE_OPTIONS = {
-  small: { label: "Small", fontSize: "0.875rem", lineHeight: "1.5" },
-  body: { label: "Body", fontSize: "", lineHeight: "" },
-  large: { label: "Large", fontSize: "1.125rem", lineHeight: "1.6" },
+  "12": { label: "12", fontSize: "12px" },
+  "14": { label: "14", fontSize: "14px" },
+  "16": { label: "16", fontSize: "16px" },
+  "18": { label: "18", fontSize: "18px" },
+  "24": { label: "24", fontSize: "24px" },
+  "32": { label: "32", fontSize: "32px" },
+} as const;
+
+const FONT_OPTIONS = {
+  inter: {
+    label: "Inter",
+    fontFamily: "var(--font-inter), Arial, sans-serif",
+  },
+  lora: {
+    label: "Lora",
+    fontFamily: "var(--font-lora), Georgia, serif",
+  },
+  mono: {
+    label: "IBM Plex Mono",
+    fontFamily: "var(--font-ibm-plex-mono), monospace",
+  },
+  caveat: {
+    label: "Caveat",
+    fontFamily: "var(--font-caveat), cursive",
+  },
 } as const;
 
 type FontSizeOption = keyof typeof FONT_SIZE_OPTIONS;
+type FontOption = keyof typeof FONT_OPTIONS;
+
+interface FormattingState {
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strikeThrough: boolean;
+  justifyLeft: boolean;
+  justifyCenter: boolean;
+  justifyRight: boolean;
+}
+
+const DEFAULT_FORMATTING_STATE: FormattingState = {
+  bold: false,
+  italic: false,
+  underline: false,
+  strikeThrough: false,
+  justifyLeft: true,
+  justifyCenter: false,
+  justifyRight: false,
+};
 
 export function TextBlocksPage({
   blocks,
@@ -646,13 +699,43 @@ function TextBlockEditor({
   onAddCollection,
 }: TextBlockEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
+  const savedRangeRef = useRef<Range | null>(null);
   const [isCursorInTable, setIsCursorInTable] = useState(false);
+  const [formattingState, setFormattingState] = useState<FormattingState>(
+    DEFAULT_FORMATTING_STATE,
+  );
 
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== block.content) {
       editorRef.current.innerHTML = block.content;
+      savedRangeRef.current = null;
     }
   }, [block.content]);
+
+  const selectionIsInEditor = (selection: Selection | null) => {
+    const editor = editorRef.current;
+    if (!editor || !selection?.rangeCount) return false;
+
+    const range = selection.getRangeAt(0);
+    return editor.contains(range.commonAncestorContainer);
+  };
+
+  const captureEditorSelection = () => {
+    const selection = window.getSelection();
+    if (!selectionIsInEditor(selection)) return;
+
+    savedRangeRef.current = selection?.getRangeAt(0).cloneRange() ?? null;
+  };
+
+  const restoreEditorSelection = () => {
+    const editor = editorRef.current;
+    const range = savedRangeRef.current;
+    if (!editor || !range || !editor.contains(range.startContainer)) return;
+
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  };
 
   const getSelectedElement = () => {
     const editor = editorRef.current;
@@ -675,15 +758,38 @@ function TextBlockEditor({
     return node?.closest("td, th") as HTMLTableCellElement | null;
   };
 
-  const syncTableSelectionState = () => {
+  const readCommandState = (command: string) => {
+    try {
+      return document.queryCommandState(command);
+    } catch {
+      return false;
+    }
+  };
+
+  const syncEditorState = () => {
+    if (selectionIsInEditor(window.getSelection())) {
+      captureEditorSelection();
+    }
+
     setIsCursorInTable(Boolean(getSelectedTableCell()));
+    setFormattingState({
+      bold: readCommandState("bold"),
+      italic: readCommandState("italic"),
+      underline: readCommandState("underline"),
+      strikeThrough: readCommandState("strikeThrough"),
+      justifyLeft: readCommandState("justifyLeft"),
+      justifyCenter: readCommandState("justifyCenter"),
+      justifyRight: readCommandState("justifyRight"),
+    });
   };
 
   const runFormatCommand = (command: string, value?: string) => {
     editorRef.current?.focus();
+    restoreEditorSelection();
     document.execCommand(command, false, value);
     onUpdateContent(editorRef.current?.innerHTML ?? "");
-    syncTableSelectionState();
+    captureEditorSelection();
+    syncEditorState();
   };
 
   const placeCaretInCell = (cell: HTMLTableCellElement | null) => {
@@ -695,11 +801,13 @@ function TextBlockEditor({
     range.collapse(false);
     selection?.removeAllRanges();
     selection?.addRange(range);
+    savedRangeRef.current = range.cloneRange();
   };
 
   const saveEditorContent = () => {
     onUpdateContent(editorRef.current?.innerHTML ?? "");
-    syncTableSelectionState();
+    captureEditorSelection();
+    syncEditorState();
   };
 
   const createBodyCell = () => {
@@ -742,6 +850,7 @@ function TextBlockEditor({
 
     table.appendChild(tableBody);
     editorRef.current?.focus();
+    restoreEditorSelection();
     const selectedBlock = getSelectedBlockElement();
     const selectedTagName = selectedBlock?.tagName.toLowerCase();
     if (selectedBlock && selectedTagName && /^h[1-6]$/.test(selectedTagName)) {
@@ -762,6 +871,7 @@ function TextBlockEditor({
       table: HTMLTableElement,
     ) => HTMLTableCellElement | null,
   ) => {
+    restoreEditorSelection();
     const cell = getSelectedTableCell();
     const row = cell?.parentElement;
     const table = cell?.closest("table");
@@ -877,34 +987,156 @@ function TextBlockEditor({
     return null;
   };
 
-  const getSelectedBlockTagName = () => {
-    const selectedBlock = getSelectedBlockElement();
+  const applyInlineStyle = (
+    command: "fontName" | "fontSize",
+    commandValue: string,
+    styleProperty: "fontFamily" | "fontSize",
+    styleValue: string,
+  ) => {
+    const editor = editorRef.current;
+    if (!editor) return;
 
-    if (selectedBlock) {
-      return selectedBlock.tagName.toLowerCase();
+    editor.focus();
+    restoreEditorSelection();
+    const selection = window.getSelection();
+    const target = getSelectedTableCell() ?? getSelectedBlockElement();
+
+    if (!selection?.rangeCount || selection.isCollapsed) {
+      if (!target) return;
+      target.style[styleProperty] = styleValue;
+      saveEditorContent();
+      return;
     }
 
-    return "";
-  };
+    const existingFontElements = new Set(editor.querySelectorAll("font"));
+    document.execCommand(command, false, commandValue);
 
-  const setBodyText = () => {
-    runFormatCommand("formatBlock", "p");
-  };
+    Array.from(editor.querySelectorAll("font")).forEach((fontElement) => {
+      if (existingFontElements.has(fontElement)) return;
 
-  const applyFontSize = (size: FontSizeOption) => {
-    const target = getSelectedTableCell() ?? getSelectedBlockElement();
-    const style = FONT_SIZE_OPTIONS[size];
-    if (!target) return;
+      const span = document.createElement("span");
+      span.style[styleProperty] = styleValue;
+      while (fontElement.firstChild) {
+        span.appendChild(fontElement.firstChild);
+      }
+      fontElement.replaceWith(span);
+    });
 
-    target.style.fontSize = style.fontSize;
-    target.style.lineHeight = style.lineHeight;
     saveEditorContent();
   };
 
-  const toggleBlockFormat = (tagName: string) => {
-    const activeTagName = getSelectedBlockTagName();
-    runFormatCommand("formatBlock", activeTagName === tagName ? "p" : tagName);
+  const applyFontSize = (size: FontSizeOption) => {
+    applyInlineStyle(
+      "fontSize",
+      "7",
+      "fontSize",
+      FONT_SIZE_OPTIONS[size].fontSize,
+    );
   };
+
+  const applyFont = (font: FontOption) => {
+    const fontFamily = FONT_OPTIONS[font].fontFamily;
+    applyInlineStyle("fontName", fontFamily, "fontFamily", fontFamily);
+  };
+
+  const applyList = (type: "bullet" | "decimal" | "alpha") => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    editor.focus();
+    restoreEditorSelection();
+    const selectedElement = getSelectedElement();
+    const currentList = selectedElement?.closest("ol, ul") as
+      | HTMLOListElement
+      | HTMLUListElement
+      | null;
+
+    if (type === "bullet") {
+      document.execCommand("insertUnorderedList");
+    } else if (currentList?.tagName === "OL") {
+      const selectedStyle = type === "alpha" ? "lower-alpha" : "decimal";
+      if (currentList.style.listStyleType === selectedStyle) {
+        document.execCommand("insertOrderedList");
+      } else {
+        currentList.style.listStyleType = selectedStyle;
+      }
+    } else {
+      document.execCommand("insertOrderedList");
+      const orderedList = getSelectedElement()?.closest("ol");
+      if (orderedList instanceof HTMLOListElement) {
+        orderedList.style.listStyleType =
+          type === "alpha" ? "lower-alpha" : "decimal";
+      }
+    }
+
+    saveEditorContent();
+  };
+
+  const handleEditorTab = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+
+    event.preventDefault();
+    const cell = getSelectedTableCell();
+    if (cell) {
+      const table = cell.closest("table");
+      if (!table) return;
+
+      const cells = Array.from(
+        table.querySelectorAll<HTMLTableCellElement>("td, th"),
+      );
+      const currentIndex = cells.indexOf(cell);
+      const nextIndex = currentIndex + (event.shiftKey ? -1 : 1);
+
+      if (cells[nextIndex]) {
+        placeCaretInCell(cells[nextIndex]);
+        syncEditorState();
+        return;
+      }
+
+      if (!event.shiftKey) {
+        const lastRow = table.rows[table.rows.length - 1];
+        const newRow = lastRow.cloneNode(false) as HTMLTableRowElement;
+        const columnCount = lastRow.cells.length || 1;
+        for (let index = 0; index < columnCount; index += 1) {
+          newRow.appendChild(createBodyCell());
+        }
+        lastRow.after(newRow);
+        placeCaretInCell(newRow.cells[0]);
+        saveEditorContent();
+      }
+      return;
+    }
+
+    const selectedElement = getSelectedElement();
+    if (selectedElement?.closest("li")) {
+      document.execCommand(event.shiftKey ? "outdent" : "indent");
+      saveEditorContent();
+      return;
+    }
+
+    const blockElement = getSelectedBlockElement();
+    if (!blockElement) return;
+
+    const currentIndent = Number.parseFloat(blockElement.style.marginLeft) || 0;
+    const nextIndent = Math.max(
+      0,
+      currentIndent + (event.shiftKey ? -1.5 : 1.5),
+    );
+    blockElement.style.marginLeft = nextIndent ? `${nextIndent}rem` : "";
+    saveEditorContent();
+  };
+
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      if (selectionIsInEditor(window.getSelection())) {
+        syncEditorState();
+      }
+    };
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () =>
+      document.removeEventListener("selectionchange", handleSelectionChange);
+  });
 
   return (
     <section className="sketchy-card p-4 min-h-[520px] flex flex-col">
@@ -961,19 +1193,33 @@ function TextBlockEditor({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-1 border-y border-primary/20 py-2">
-        <ToolbarButton
-          label="Heading"
-          onClick={() => toggleBlockFormat("h2")}
+        <select
+          aria-label="Font"
+          title="Font"
+          defaultValue=""
+          onMouseDown={captureEditorSelection}
+          onChange={(event) => {
+            const value = event.currentTarget.value as FontOption;
+            if (!value) return;
+            applyFont(value);
+            event.currentTarget.value = "";
+          }}
+          className="h-8 max-w-32 rounded-md border border-primary/20 bg-background/50 px-2 text-xs text-muted-foreground outline-none transition-colors hover:bg-primary/10 hover:text-foreground focus:ring-2 focus:ring-primary/20"
         >
-          <Heading2 className="h-4 w-4" />
-        </ToolbarButton>
-        <ToolbarButton label="Body text" onClick={setBodyText}>
-          <Type className="h-4 w-4" />
-        </ToolbarButton>
+          <option value="" disabled>
+            Font
+          </option>
+          {Object.entries(FONT_OPTIONS).map(([value, option]) => (
+            <option key={value} value={value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
         <select
           aria-label="Font size"
           title="Font size"
           defaultValue=""
+          onMouseDown={captureEditorSelection}
           onChange={(event) => {
             const value = event.currentTarget.value as FontSizeOption;
             if (!value) return;
@@ -991,84 +1237,188 @@ function TextBlockEditor({
             </option>
           ))}
         </select>
-        <ToolbarButton label="Bold" onClick={() => runFormatCommand("bold")}>
+        <span className="mx-1 h-5 w-px bg-primary/20" aria-hidden />
+        <ToolbarButton
+          label="Bold"
+          onClick={() => runFormatCommand("bold")}
+          active={formattingState.bold}
+        >
           <Bold className="h-4 w-4" />
         </ToolbarButton>
         <ToolbarButton
           label="Italic"
           onClick={() => runFormatCommand("italic")}
+          active={formattingState.italic}
         >
           <Italic className="h-4 w-4" />
         </ToolbarButton>
         <ToolbarButton
-          label="Bullet list"
-          onClick={() => runFormatCommand("insertUnorderedList")}
+          label="Underline"
+          onClick={() => runFormatCommand("underline")}
+          active={formattingState.underline}
         >
-          <List className="h-4 w-4" />
+          <Underline className="h-4 w-4" />
         </ToolbarButton>
         <ToolbarButton
-          label="Numbered list"
-          onClick={() => runFormatCommand("insertOrderedList")}
+          label="Strikethrough"
+          onClick={() => runFormatCommand("strikeThrough")}
+          active={formattingState.strikeThrough}
         >
-          <ListOrdered className="h-4 w-4" />
+          <Strikethrough className="h-4 w-4" />
         </ToolbarButton>
         <span className="mx-1 h-5 w-px bg-primary/20" aria-hidden />
-        <ToolbarButton label="Insert table" onClick={insertTable}>
-          <Table2 className="h-4 w-4" />
+        <DropdownMenu
+          onOpenChange={(open) => {
+            if (open) captureEditorSelection();
+          }}
+        >
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              onPointerDown={captureEditorSelection}
+              className="flex h-8 items-center justify-center gap-0.5 rounded-md px-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
+              aria-label="List options"
+              title="Lists"
+            >
+              <List className="h-4 w-4" />
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              editorRef.current?.focus();
+              restoreEditorSelection();
+              syncEditorState();
+            }}
+          >
+            <DropdownMenuItem onSelect={() => applyList("bullet")}>
+              <List />
+              Bullets
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => applyList("decimal")}>
+              <ListOrdered />
+              1, 2, 3
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => applyList("alpha")}>
+              <span className="flex h-4 w-4 items-center justify-center text-xs font-semibold">
+                a.
+              </span>
+              a, b, c
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <ToolbarButton
+          label="Align left"
+          onClick={() => runFormatCommand("justifyLeft")}
+          active={formattingState.justifyLeft}
+        >
+          <AlignLeft className="h-4 w-4" />
         </ToolbarButton>
         <ToolbarButton
-          label="Add table row"
-          onClick={addTableRow}
-          disabled={!isCursorInTable}
+          label="Align centre"
+          onClick={() => runFormatCommand("justifyCenter")}
+          active={formattingState.justifyCenter}
         >
-          <TableRowsSplit className="h-4 w-4" />
+          <AlignCenter className="h-4 w-4" />
         </ToolbarButton>
         <ToolbarButton
-          label="Add table column"
-          onClick={addTableColumn}
-          disabled={!isCursorInTable}
+          label="Align right"
+          onClick={() => runFormatCommand("justifyRight")}
+          active={formattingState.justifyRight}
         >
-          <TableColumnsSplit className="h-4 w-4" />
+          <AlignRight className="h-4 w-4" />
         </ToolbarButton>
-        <ToolbarButton
-          label="Delete table row"
-          onClick={deleteTableRow}
-          disabled={!isCursorInTable}
+        <span className="mx-1 h-5 w-px bg-primary/20" aria-hidden />
+        <DropdownMenu
+          onOpenChange={(open) => {
+            if (open) captureEditorSelection();
+          }}
         >
-          <SquareMinus className="h-4 w-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          label="Delete table column"
-          onClick={deleteTableColumn}
-          disabled={!isCursorInTable}
-        >
-          <SquarePlus className="h-4 w-4 rotate-45" />
-        </ToolbarButton>
-        <ToolbarButton
-          label="Delete table"
-          onClick={deleteTable}
-          disabled={!isCursorInTable}
-        >
-          <Trash2 className="h-4 w-4" />
-        </ToolbarButton>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              onPointerDown={captureEditorSelection}
+              className="flex h-8 items-center justify-center gap-0.5 rounded-md px-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
+              aria-label="Table options"
+              title="Table"
+            >
+              <Table2 className="h-4 w-4" />
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            className="min-w-44"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              editorRef.current?.focus();
+              restoreEditorSelection();
+              syncEditorState();
+            }}
+          >
+            <DropdownMenuItem onSelect={insertTable}>
+              <Table2 />
+              Insert 3 × 3 table
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={!isCursorInTable} onSelect={addTableRow}>
+              <TableRowsSplit />
+              Add row below
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!isCursorInTable}
+              onSelect={addTableColumn}
+            >
+              <TableColumnsSplit />
+              Add column right
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!isCursorInTable}
+              onSelect={deleteTableRow}
+            >
+              <SquareMinus />
+              Delete row
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!isCursorInTable}
+              onSelect={deleteTableColumn}
+            >
+              <SquarePlus className="rotate-45" />
+              Delete column
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={!isCursorInTable}
+              onSelect={deleteTable}
+              className="text-destructive focus:text-destructive"
+            >
+              <Trash2 />
+              Delete table
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <div
         ref={editorRef}
         contentEditable
         suppressContentEditableWarning
-        onClick={syncTableSelectionState}
-        onKeyUp={syncTableSelectionState}
+        onClick={syncEditorState}
+        onKeyDown={handleEditorTab}
+        onKeyUp={syncEditorState}
+        onSelect={syncEditorState}
         onInput={(event) => {
           onUpdateContent(event.currentTarget.innerHTML);
-          syncTableSelectionState();
+          syncEditorState();
         }}
         onPaste={(event) => {
           event.preventDefault();
           const text = event.clipboardData.getData("text/plain");
           document.execCommand("insertText", false, text);
           onUpdateContent(event.currentTarget.innerHTML);
-          syncTableSelectionState();
+          syncEditorState();
         }}
         className="rich-text-editor mt-4 flex-1 min-h-[380px] rounded-md bg-background/35 px-4 py-3 text-base leading-7 text-foreground outline-none focus:ring-2 focus:ring-primary/20"
         aria-label={`Write content for ${block.title}`}
@@ -1127,6 +1477,7 @@ interface ToolbarButtonProps {
   onClick: () => void;
   children: ReactNode;
   disabled?: boolean;
+  active?: boolean;
 }
 
 function ToolbarButton({
@@ -1134,6 +1485,7 @@ function ToolbarButton({
   onClick,
   children,
   disabled = false,
+  active = false,
 }: ToolbarButtonProps) {
   return (
     <button
@@ -1141,8 +1493,13 @@ function ToolbarButton({
       onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
       disabled={disabled}
-      className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
+      className={`h-8 w-8 flex items-center justify-center rounded-md transition-colors hover:bg-primary/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-35 ${
+        active
+          ? "bg-primary/15 text-primary"
+          : "text-muted-foreground"
+      }`}
       aria-label={label}
+      aria-pressed={active}
       title={label}
     >
       {children}
