@@ -40,6 +40,61 @@ const memoCollectionSchema = z.object({
   order: z.number().int(),
 });
 
+const sketchPointSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+});
+
+const sketchElementBaseSchema = z.object({
+  id,
+  color: z.string(),
+  strokeWidth: z.number().positive(),
+});
+
+const sketchElementSchema = z.discriminatedUnion("type", [
+  sketchElementBaseSchema.extend({
+    type: z.literal("pen"),
+    points: z.array(sketchPointSchema),
+  }),
+  sketchElementBaseSchema.extend({
+    type: z.literal("erase"),
+    points: z.array(sketchPointSchema),
+    radius: z.number().positive(),
+  }),
+  sketchElementBaseSchema.extend({
+    type: z.enum(["line", "arrow", "rectangle", "ellipse"]),
+    start: sketchPointSchema,
+    end: sketchPointSchema,
+    fillColor: z.string().nullable().optional(),
+  }),
+  sketchElementBaseSchema.extend({
+    type: z.literal("text"),
+    point: sketchPointSchema,
+    text: z.string(),
+    fontSize: z.number().positive(),
+  }),
+]);
+
+const sketchSchema = z.object({
+  id,
+  title: z.string(),
+  elements: z.array(sketchElementSchema),
+  collectionId: id.nullable(),
+  previousCollectionId: id.nullable().optional(),
+  archivedAt: timestamp.nullable().optional(),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+  order: z.number().int(),
+});
+
+const sketchCollectionSchema = z.object({
+  id,
+  title: z.string(),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+  order: z.number().int(),
+});
+
 export const workspaceMutationActionSchema = z.enum([
   "setTimeRange",
   "addSticky",
@@ -66,6 +121,16 @@ export const workspaceMutationActionSchema = z.enum([
   "addMemoCollection",
   "renameMemoCollection",
   "deleteMemoCollection",
+  "addSketch",
+  "renameSketch",
+  "editSketch",
+  "moveSketch",
+  "archiveSketch",
+  "restoreSketch",
+  "deleteSketch",
+  "addSketchCollection",
+  "renameSketchCollection",
+  "deleteSketchCollection",
 ]);
 
 export const workspaceMutationSchema = z.discriminatedUnion("action", [
@@ -189,6 +254,62 @@ export const workspaceMutationSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("deleteMemoCollection"),
+    payload: z.object({ collectionId: id }),
+  }),
+  z.object({
+    action: z.literal("addSketch"),
+    payload: z.object({ sketch: sketchSchema }),
+  }),
+  z.object({
+    action: z.literal("renameSketch"),
+    payload: z.object({ sketchId: id, title: z.string(), updatedAt: timestamp }),
+  }),
+  z.object({
+    action: z.literal("editSketch"),
+    payload: z.object({
+      sketchId: id,
+      elements: z.array(sketchElementSchema),
+      updatedAt: timestamp,
+    }),
+  }),
+  z.object({
+    action: z.literal("moveSketch"),
+    payload: z.object({
+      sketchId: id,
+      collectionId: id.nullable(),
+      updatedAt: timestamp,
+    }),
+  }),
+  z.object({
+    action: z.literal("archiveSketch"),
+    payload: z.object({
+      sketchId: id,
+      archivedAt: timestamp,
+      updatedAt: timestamp,
+    }),
+  }),
+  z.object({
+    action: z.literal("restoreSketch"),
+    payload: z.object({ sketchId: id, updatedAt: timestamp }),
+  }),
+  z.object({
+    action: z.literal("deleteSketch"),
+    payload: z.object({ sketchId: id }),
+  }),
+  z.object({
+    action: z.literal("addSketchCollection"),
+    payload: z.object({ collection: sketchCollectionSchema }),
+  }),
+  z.object({
+    action: z.literal("renameSketchCollection"),
+    payload: z.object({
+      collectionId: id,
+      title: z.string(),
+      updatedAt: timestamp,
+    }),
+  }),
+  z.object({
+    action: z.literal("deleteSketchCollection"),
     payload: z.object({ collectionId: id }),
   }),
 ]);

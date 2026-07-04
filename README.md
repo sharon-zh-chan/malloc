@@ -72,7 +72,8 @@ curl -X POST http://localhost:3000/api/mutations \
 Each `client_mutation_id` is an idempotency key. Supported actions include
 `addSticky`, `reorderStickies`, `addTask`, `setTaskExpanded`, `setTaskStatus`, `moveTask`,
 `reorderTasks`, `clearStickyArchivedTasks`,
-`addMemo`, `editMemo`, `archiveMemo`, and notepad collection operations.
+`addMemo`, `editMemo`, `archiveMemo`, notepad collection operations, and the
+`addSketch`, `editSketch`, and sketch collection operations.
 
 ### Legacy app-state compatibility
 
@@ -109,6 +110,12 @@ once before testing writes.
 Apply `scripts/010_add_subtasks.sql` before deploying the subtask UI. Subtasks
 use `addTask` with a `parentTaskId`; the migration keeps them attached to their
 parent during cross-sticky moves, restoration, and permanent deletion.
+
+Apply `scripts/011_add_sketchpad.sql` before deploying Sketchpad. It creates
+the sketch and sketch-folder tables and extends workspace hydration and
+targeted mutations while preserving the existing task and notepad data.
+If Sketchpad was already deployed, apply `scripts/012_add_sketch_archive.sql`
+to add the reversible Deleted folder workflow.
 
 ## Learn More
 

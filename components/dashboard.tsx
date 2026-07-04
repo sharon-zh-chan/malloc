@@ -10,6 +10,7 @@ import { AuthScreen } from "./auth-screen";
 import { LoggedOutScreen } from "./logged-out-screen";
 import { TextBlocksPage } from "./text-blocks-page";
 import { HistoryPage } from "./history-page";
+import { SketchpadPage } from "./sketchpad-page";
 import {
   DndContext,
   closestCenter,
@@ -126,15 +127,26 @@ export function Dashboard() {
     addMemoCollection,
     updateMemoCollectionTitle,
     deleteMemoCollection,
+    addSketch,
+    updateSketchTitle,
+    updateSketchElements,
+    updateSketchCollection,
+    archiveSketch,
+    restoreSketch,
+    deleteSketch,
+    addSketchCollection,
+    updateSketchCollectionTitle,
+    deleteSketchCollection,
     trackProductEvent,
   } = useTodoStore();
 
-  const [activeView, setActiveView] = useState<"stickies" | "memos" | "history">(
-    "stickies",
-  );
+  const [activeView, setActiveView] = useState<
+    "stickies" | "memos" | "sketches" | "history"
+  >("stickies");
   const [selectedTextBlockId, setSelectedTextBlockId] = useState<string | null>(
     null,
   );
+  const [selectedSketchId, setSelectedSketchId] = useState<string | null>(null);
   const [logoutRedirecting, setLogoutRedirecting] = useState(false);
   const [taskDropTargetStickyId, setTaskDropTargetStickyId] = useState<
     string | null
@@ -164,6 +176,57 @@ export function Dashboard() {
       setSelectedTextBlockId(null);
     }
   }, [state.textBlocks, selectedTextBlockId]);
+
+  useEffect(() => {
+    if (
+      selectedSketchId &&
+      !state.sketches.some((sketch) => sketch.id === selectedSketchId)
+    ) {
+      setSelectedSketchId(null);
+    }
+  }, [state.sketches, selectedSketchId]);
+
+  useEffect(() => {
+    const handleWorkspaceShortcut = (event: KeyboardEvent) => {
+      const target = event.target;
+      const editingText =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable);
+      if (editingText) return;
+
+      const modifier = event.metaKey || event.ctrlKey;
+      if (modifier && event.key === "Enter" && activeView !== "history") {
+        event.preventDefault();
+        if (activeView === "stickies") {
+          addBlock("Untitled Sticky");
+        } else if (activeView === "memos") {
+          const memoId = addTextBlock("Untitled Note");
+          if (memoId) setSelectedTextBlockId(memoId);
+        } else {
+          const sketchId = addSketch("Untitled sketch");
+          if (sketchId) setSelectedSketchId(sketchId);
+        }
+        return;
+      }
+
+      if (event.altKey && !modifier && ["1", "2", "3"].includes(event.key)) {
+        event.preventDefault();
+        const nextView = (
+          {
+            "1": "stickies",
+            "2": "memos",
+            "3": "sketches",
+          } as const
+        )[event.key as "1" | "2" | "3"];
+        setActiveView(nextView);
+        void trackProductEvent("view_switched", { view: nextView });
+      }
+    };
+
+    window.addEventListener("keydown", handleWorkspaceShortcut);
+    return () => window.removeEventListener("keydown", handleWorkspaceShortcut);
+  }, [activeView, addBlock, addSketch, addTextBlock, trackProductEvent]);
 
   const moveBlock = (index: number, direction: "up" | "down") => {
     const newBlocks = [...state.blocks];
@@ -395,6 +458,7 @@ export function Dashboard() {
               type="button"
               role="tab"
               aria-selected={activeView === "stickies"}
+              title="Stickies (Alt+1)"
               onClick={() => {
                 setActiveView("stickies");
                 void trackProductEvent("view_switched", { view: "stickies" });
@@ -411,6 +475,7 @@ export function Dashboard() {
               type="button"
               role="tab"
               aria-selected={activeView === "memos"}
+              title="Notepad (Alt+2)"
               onClick={() => {
                 setActiveView("memos");
                 void trackProductEvent("view_switched", { view: "memos" });
@@ -422,6 +487,23 @@ export function Dashboard() {
               }`}
             >
               Notepad
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === "sketches"}
+              title="Sketchpad (Alt+3)"
+              onClick={() => {
+                setActiveView("sketches");
+                void trackProductEvent("view_switched", { view: "sketches" });
+              }}
+              className={`border-r border-foreground px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
+                activeView === "sketches"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-background hover:text-foreground"
+              }`}
+            >
+              Sketchpad
             </button>
             <button
               type="button"
@@ -441,7 +523,7 @@ export function Dashboard() {
             </button>
           </div>
 
-          {activeView !== "history" && (
+          {(activeView === "stickies" || activeView === "memos") && (
             <GlobalButtons
               mode={activeView}
               blocks={activeBlocks}
@@ -537,6 +619,23 @@ export function Dashboard() {
             onAddCollection={addMemoCollection}
             onUpdateCollectionTitle={updateMemoCollectionTitle}
             onDeleteCollection={deleteMemoCollection}
+          />
+        ) : activeView === "sketches" ? (
+          <SketchpadPage
+            sketches={state.sketches}
+            collections={state.sketchCollections}
+            selectedSketchId={selectedSketchId}
+            onSelectSketch={setSelectedSketchId}
+            onAddSketch={addSketch}
+            onUpdateTitle={updateSketchTitle}
+            onUpdateElements={updateSketchElements}
+            onUpdateCollection={updateSketchCollection}
+            onArchiveSketch={archiveSketch}
+            onRestoreSketch={restoreSketch}
+            onDeleteSketchPermanently={deleteSketch}
+            onAddCollection={addSketchCollection}
+            onUpdateCollectionTitle={updateSketchCollectionTitle}
+            onDeleteCollection={deleteSketchCollection}
           />
         ) : (
           <HistoryPage

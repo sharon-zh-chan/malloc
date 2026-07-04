@@ -82,7 +82,7 @@ export function GlobalButtons({
           onClick={() => setShowAddModal(true)}
           className="flex h-9 w-9 items-center justify-center bg-card text-primary transition-colors hover:bg-primary hover:text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={mode === "memos" ? "Add note" : "Add sticky"}
-          title={mode === "memos" ? "Add note" : "Add sticky"}
+          title={`${mode === "memos" ? "Add note" : "Add sticky"} (Ctrl/Cmd+Enter)`}
         >
           <Plus className="h-4 w-4" />
         </button>
