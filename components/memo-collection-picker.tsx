@@ -13,6 +13,7 @@ interface MemoCollectionPickerProps {
   isArchived?: boolean;
   onArchive?: () => void;
   compact?: boolean;
+  ariaLabel?: string;
 }
 
 const UNFILED_LABEL = "No folder";
@@ -27,6 +28,7 @@ export function MemoCollectionPicker({
   isArchived = false,
   onArchive,
   compact = false,
+  ariaLabel = "Choose notepad collection",
 }: MemoCollectionPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -83,7 +85,7 @@ export function MemoCollectionPicker({
             ? "px-2 py-1 text-sm"
             : "w-full px-3 py-2 text-sm sketchy-border-light bg-background/40 justify-between"
         }`}
-        aria-label="Choose notepad collection"
+        aria-label={ariaLabel}
       >
         <span className="flex min-w-0 items-center gap-1.5">
           <Folder className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />

@@ -4,6 +4,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   AppState,
   MemoCollection,
+  Sketch,
+  SketchCollection,
+  SketchElement,
   TodoBlock,
   TodoItem,
   TextBlock,
@@ -43,7 +46,13 @@ type AnalyticsEventName =
   | "memo_restored"
   | "memo_deleted"
   | "memo_collection_created"
-  | "memo_collection_deleted";
+  | "memo_collection_deleted"
+  | "sketch_created"
+  | "sketch_archived"
+  | "sketch_restored"
+  | "sketch_deleted"
+  | "sketch_collection_created"
+  | "sketch_collection_deleted";
 
 type AnalyticsProperties = Record<string, string | number | boolean | null>;
 
@@ -145,6 +154,8 @@ function createDefaultState(): AppState {
     ],
     textBlocks: [],
     memoCollections: [],
+    sketches: [],
+    sketchCollections: [],
     lastUpdatedAt: 0,
   };
 }
@@ -177,6 +188,18 @@ function migrateAppState(raw: Partial<AppState>): AppState {
       : [],
     memoCollections: Array.isArray(raw.memoCollections)
       ? raw.memoCollections
+      : [],
+    sketches: Array.isArray(raw.sketches)
+      ? raw.sketches.map((sketch) => ({
+          ...sketch,
+          elements: Array.isArray(sketch.elements) ? sketch.elements : [],
+          collectionId: sketch.collectionId ?? null,
+          previousCollectionId: sketch.previousCollectionId ?? null,
+          archivedAt: sketch.archivedAt ?? null,
+        }))
+      : [],
+    sketchCollections: Array.isArray(raw.sketchCollections)
+      ? raw.sketchCollections
       : [],
     lastUpdatedAt: raw.lastUpdatedAt || Date.now(),
   };
@@ -316,6 +339,31 @@ async function createInitialWorkspace(
     }
   }
 
+  for (const collection of state.sketchCollections) {
+    response = await applyInitialWorkspaceMutation(supabase, {
+      action: "addSketchCollection",
+      payload: { collection },
+    });
+  }
+
+  for (const sketch of state.sketches) {
+    response = await applyInitialWorkspaceMutation(supabase, {
+      action: "addSketch",
+      payload: { sketch },
+    });
+
+    if (sketch.archivedAt) {
+      response = await applyInitialWorkspaceMutation(supabase, {
+        action: "archiveSketch",
+        payload: {
+          sketchId: sketch.id,
+          archivedAt: sketch.archivedAt,
+          updatedAt: sketch.updatedAt,
+        },
+      });
+    }
+  }
+
   return response;
 }
 
@@ -344,6 +392,14 @@ function mutationQueueKey(mutation: WorkspaceMutation): string | null {
     case "moveMemo":
       return `${mutation.action}:${mutation.payload.memoId}`;
     case "renameMemoCollection":
+      return `${mutation.action}:${mutation.payload.collectionId}`;
+    case "renameSketch":
+    case "editSketch":
+    case "moveSketch":
+    case "archiveSketch":
+    case "restoreSketch":
+      return `${mutation.action}:${mutation.payload.sketchId}`;
+    case "renameSketchCollection":
       return `${mutation.action}:${mutation.payload.collectionId}`;
     default:
       return null;
@@ -798,6 +854,8 @@ export function useTodoStore() {
             stickies_count: stateRef.current.blocks.length,
             memos_count: stateRef.current.textBlocks.length,
             memo_collections_count: stateRef.current.memoCollections.length,
+            sketches_count: stateRef.current.sketches.length,
+            sketch_collections_count: stateRef.current.sketchCollections.length,
           },
         });
 
@@ -1601,6 +1659,264 @@ export function useTodoStore() {
     [applyLocalMutation, state.memoCollections.length, trackProductEvent],
   );
 
+  const addSketch = useCallback(
+    (title: string, collectionId: string | null = null) => {
+      const trimmed = title.trim();
+      if (!trimmed) return null;
+
+      const now = Date.now();
+      const sketch: Sketch = {
+        id: generateId(),
+        title: trimmed,
+        elements: [],
+        collectionId,
+        previousCollectionId: null,
+        archivedAt: null,
+        createdAt: now,
+        updatedAt: now,
+        order: state.sketches.length,
+      };
+      applyLocalMutation(
+        (prev) => ({ ...prev, sketches: [...prev.sketches, sketch] }),
+        { action: "addSketch", payload: { sketch } },
+      );
+      void trackProductEvent("sketch_created", {
+        sketches_count_after: state.sketches.length + 1,
+        has_collection: Boolean(collectionId),
+      });
+      return sketch.id;
+    },
+    [applyLocalMutation, state.sketches.length, trackProductEvent],
+  );
+
+  const updateSketchTitle = useCallback(
+    (sketchId: string, title: string) => {
+      const trimmed = title.trim();
+      if (!trimmed) return;
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          sketches: prev.sketches.map((sketch) =>
+            sketch.id === sketchId
+              ? { ...sketch, title: trimmed, updatedAt }
+              : sketch,
+          ),
+        }),
+        { action: "renameSketch", payload: { sketchId, title: trimmed, updatedAt } },
+      );
+    },
+    [applyLocalMutation],
+  );
+
+  const updateSketchElements = useCallback(
+    (sketchId: string, elements: SketchElement[]) => {
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          sketches: prev.sketches.map((sketch) =>
+            sketch.id === sketchId
+              ? { ...sketch, elements, updatedAt }
+              : sketch,
+          ),
+        }),
+        { action: "editSketch", payload: { sketchId, elements, updatedAt } },
+      );
+    },
+    [applyLocalMutation],
+  );
+
+  const updateSketchCollection = useCallback(
+    (sketchId: string, collectionId: string | null) => {
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          sketches: prev.sketches.map((sketch) =>
+            sketch.id === sketchId
+              ? {
+                  ...sketch,
+                  collectionId,
+                  previousCollectionId: null,
+                  archivedAt: null,
+                  updatedAt,
+                }
+              : sketch,
+          ),
+        }),
+        { action: "moveSketch", payload: { sketchId, collectionId, updatedAt } },
+      );
+    },
+    [applyLocalMutation],
+  );
+
+  const archiveSketch = useCallback(
+    (sketchId: string) => {
+      const archivedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          sketches: prev.sketches.map((sketch) =>
+            sketch.id === sketchId
+              ? {
+                  ...sketch,
+                  previousCollectionId:
+                    sketch.previousCollectionId ?? sketch.collectionId ?? null,
+                  collectionId: null,
+                  archivedAt,
+                  updatedAt: archivedAt,
+                }
+              : sketch,
+          ),
+        }),
+        {
+          action: "archiveSketch",
+          payload: { sketchId, archivedAt, updatedAt: archivedAt },
+        },
+      );
+      void trackProductEvent("sketch_archived");
+    },
+    [applyLocalMutation, trackProductEvent],
+  );
+
+  const restoreSketch = useCallback(
+    (sketchId: string) => {
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          sketches: prev.sketches.map((sketch) =>
+            sketch.id === sketchId
+              ? {
+                  ...sketch,
+                  collectionId: sketch.previousCollectionId ?? null,
+                  previousCollectionId: null,
+                  archivedAt: null,
+                  updatedAt,
+                }
+              : sketch,
+          ),
+        }),
+        { action: "restoreSketch", payload: { sketchId, updatedAt } },
+      );
+      void trackProductEvent("sketch_restored");
+    },
+    [applyLocalMutation, trackProductEvent],
+  );
+
+  const deleteSketch = useCallback(
+    (sketchId: string) => {
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          sketches: prev.sketches
+            .filter((sketch) => sketch.id !== sketchId)
+            .map((sketch, order) => ({ ...sketch, order })),
+        }),
+        { action: "deleteSketch", payload: { sketchId } },
+      );
+      void trackProductEvent("sketch_deleted", {
+        sketches_count_after: Math.max(state.sketches.length - 1, 0),
+      });
+    },
+    [applyLocalMutation, state.sketches.length, trackProductEvent],
+  );
+
+  const addSketchCollection = useCallback(
+    (title: string) => {
+      const trimmed = title.trim();
+      if (!trimmed) return null;
+      const existing = state.sketchCollections.find(
+        (collection) =>
+          collection.title.toLowerCase() === trimmed.toLowerCase(),
+      );
+      if (existing) return existing.id;
+
+      const now = Date.now();
+      const collection: SketchCollection = {
+        id: generateId(),
+        title: trimmed,
+        createdAt: now,
+        updatedAt: now,
+        order: state.sketchCollections.length,
+      };
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          sketchCollections: [...prev.sketchCollections, collection],
+        }),
+        { action: "addSketchCollection", payload: { collection } },
+      );
+      void trackProductEvent("sketch_collection_created", {
+        sketch_collections_count_after: state.sketchCollections.length + 1,
+      });
+      return collection.id;
+    },
+    [applyLocalMutation, state.sketchCollections, trackProductEvent],
+  );
+
+  const updateSketchCollectionTitle = useCallback(
+    (collectionId: string, title: string) => {
+      const trimmed = title.trim();
+      if (!trimmed) return;
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          sketchCollections: prev.sketchCollections.map((collection) =>
+            collection.id === collectionId
+              ? { ...collection, title: trimmed, updatedAt }
+              : collection,
+          ),
+        }),
+        {
+          action: "renameSketchCollection",
+          payload: { collectionId, title: trimmed, updatedAt },
+        },
+      );
+    },
+    [applyLocalMutation],
+  );
+
+  const deleteSketchCollection = useCallback(
+    (collectionId: string) => {
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          sketchCollections: prev.sketchCollections
+            .filter((collection) => collection.id !== collectionId)
+            .map((collection, order) => ({ ...collection, order })),
+          sketches: prev.sketches.map((sketch) =>
+            sketch.collectionId === collectionId ||
+            sketch.previousCollectionId === collectionId
+              ? {
+                  ...sketch,
+                  collectionId:
+                    sketch.collectionId === collectionId
+                      ? null
+                      : sketch.collectionId,
+                  previousCollectionId:
+                    sketch.previousCollectionId === collectionId
+                      ? null
+                      : sketch.previousCollectionId,
+                  updatedAt: Date.now(),
+                }
+              : sketch,
+          ),
+        }),
+        { action: "deleteSketchCollection", payload: { collectionId } },
+      );
+      void trackProductEvent("sketch_collection_deleted", {
+        sketch_collections_count_after: Math.max(
+          state.sketchCollections.length - 1,
+          0,
+        ),
+      });
+    },
+    [applyLocalMutation, state.sketchCollections.length, trackProductEvent],
+  );
+
   return {
     state,
     hydrated,
@@ -1637,6 +1953,16 @@ export function useTodoStore() {
     addMemoCollection,
     updateMemoCollectionTitle,
     deleteMemoCollection,
+    addSketch,
+    updateSketchTitle,
+    updateSketchElements,
+    updateSketchCollection,
+    archiveSketch,
+    restoreSketch,
+    deleteSketch,
+    addSketchCollection,
+    updateSketchCollectionTitle,
+    deleteSketchCollection,
     trackProductEvent,
   };
 }

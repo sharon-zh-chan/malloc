@@ -8,6 +8,8 @@ const appStateSchema = z.object({
   blocks: z.array(z.unknown()).catch([]),
   textBlocks: z.array(z.unknown()).catch([]),
   memoCollections: z.array(z.unknown()).catch([]),
+  sketches: z.array(z.unknown()).catch([]),
+  sketchCollections: z.array(z.unknown()).catch([]),
   lastUpdatedAt: z.number().catch(Date.now()),
 });
 
@@ -19,6 +21,9 @@ function normalizeState(state: unknown): AppState {
     blocks: parsed.blocks as AppState["blocks"],
     textBlocks: parsed.textBlocks as AppState["textBlocks"],
     memoCollections: parsed.memoCollections as AppState["memoCollections"],
+    sketches: parsed.sketches as AppState["sketches"],
+    sketchCollections:
+      parsed.sketchCollections as AppState["sketchCollections"],
     lastUpdatedAt: parsed.lastUpdatedAt,
   };
 }
