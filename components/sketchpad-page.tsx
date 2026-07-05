@@ -60,6 +60,16 @@ const PEN_SIZES = [1, 2.5, 4.5, 7, 11];
 const TEXT_SIZES = [22, 30, 40, 54, 72];
 const ERASER_SIZES = [12, 24, 40, 64, 96];
 const SIZE_LABELS = ["Smallest", "Small", "Medium", "Large", "Largest"];
+const SELECTION_PADDING = 12;
+
+type SketchBounds = {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+};
+
+type ResizeHandle = "nw" | "ne" | "sw" | "se";
 
 const TOOLS: Array<{
   value: SketchTool;
@@ -202,6 +212,19 @@ function eraserHitsElement(
   return Math.hypot(point.x - boundary.x, point.y - boundary.y) <= tolerance;
 }
 
+function selectionHitsElement(element: SketchElement, point: SketchPoint) {
+  if (element.type === "rectangle" || element.type === "ellipse") {
+    const bounds = elementBounds(element);
+    return (
+      point.x >= bounds.left - 6 &&
+      point.x <= bounds.right + 6 &&
+      point.y >= bounds.top - 6 &&
+      point.y <= bounds.bottom + 6
+    );
+  }
+  return eraserHitsElement(element, point, 14);
+}
+
 function moveElement(element: SketchElement, dx: number, dy: number): SketchElement {
   if (element.type === "pen" || element.type === "erase") {
     return {
@@ -253,24 +276,121 @@ function elementBounds(element: SketchElement) {
   };
 }
 
-function renderSelection(element: SketchElement) {
-  const bounds = elementBounds(element);
-  const padding = 12;
+function combinedBounds(elements: SketchElement[]): SketchBounds | null {
+  if (elements.length === 0) return null;
+  const bounds = elements.map(elementBounds);
+  return {
+    left: Math.min(...bounds.map((item) => item.left)),
+    right: Math.max(...bounds.map((item) => item.right)),
+    top: Math.min(...bounds.map((item) => item.top)),
+    bottom: Math.max(...bounds.map((item) => item.bottom)),
+  };
+}
+
+function boundsOverlap(first: SketchBounds, second: SketchBounds) {
+  return !(
+    first.right < second.left ||
+    first.left > second.right ||
+    first.bottom < second.top ||
+    first.top > second.bottom
+  );
+}
+
+function scalePoint(point: SketchPoint, anchor: SketchPoint, scale: number) {
+  return {
+    x: anchor.x + (point.x - anchor.x) * scale,
+    y: anchor.y + (point.y - anchor.y) * scale,
+  };
+}
+
+function scaleElement(
+  element: SketchElement,
+  anchor: SketchPoint,
+  scale: number,
+): SketchElement {
+  const strokeWidth = Math.max(0.5, element.strokeWidth * scale);
+  if (element.type === "pen" || element.type === "erase") {
+    return {
+      ...element,
+      points: element.points.map((point) => scalePoint(point, anchor, scale)),
+      strokeWidth,
+      ...(element.type === "erase"
+        ? { radius: Math.max(1, element.radius * scale) }
+        : {}),
+    };
+  }
+  if (element.type === "text") {
+    return {
+      ...element,
+      point: scalePoint(element.point, anchor, scale),
+      fontSize: Math.max(6, element.fontSize * scale),
+      strokeWidth,
+    };
+  }
+  return {
+    ...element,
+    start: scalePoint(element.start, anchor, scale),
+    end: scalePoint(element.end, anchor, scale),
+    strokeWidth,
+  };
+}
+
+function paddedSelectionBounds(elements: SketchElement[]) {
+  const bounds = combinedBounds(elements);
+  if (!bounds) return null;
+  return {
+    left: bounds.left - SELECTION_PADDING,
+    right: bounds.right + SELECTION_PADDING,
+    top: bounds.top - SELECTION_PADDING,
+    bottom: bounds.bottom + SELECTION_PADDING,
+  };
+}
+
+function renderSelection(elements: SketchElement[]) {
+  const bounds = paddedSelectionBounds(elements);
+  if (!bounds) return null;
   const width = Math.max(bounds.right - bounds.left, 12);
   const height = Math.max(bounds.bottom - bounds.top, 12);
+  const handles: Array<{
+    value: ResizeHandle;
+    x: number;
+    y: number;
+    cursor: string;
+  }> = [
+    { value: "nw", x: bounds.left, y: bounds.top, cursor: "nwse-resize" },
+    { value: "ne", x: bounds.right, y: bounds.top, cursor: "nesw-resize" },
+    { value: "sw", x: bounds.left, y: bounds.bottom, cursor: "nesw-resize" },
+    { value: "se", x: bounds.right, y: bounds.bottom, cursor: "nwse-resize" },
+  ];
   return (
-    <rect
-      x={bounds.left - padding}
-      y={bounds.top - padding}
-      width={width + padding * 2}
-      height={height + padding * 2}
-      fill="rgba(25, 113, 194, 0.06)"
-      stroke="#1971c2"
-      strokeWidth="1.5"
-      strokeDasharray="7 5"
-      vectorEffect="non-scaling-stroke"
-      pointerEvents="none"
-    />
+    <g>
+      <rect
+        x={bounds.left}
+        y={bounds.top}
+        width={width}
+        height={height}
+        fill="rgba(25, 113, 194, 0.06)"
+        stroke="#1971c2"
+        strokeWidth="1.5"
+        strokeDasharray="7 5"
+        vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
+      />
+      {handles.map((handle) => (
+        <circle
+          key={handle.value}
+          cx={handle.x}
+          cy={handle.y}
+          r="8"
+          fill="white"
+          stroke="#1971c2"
+          strokeWidth="2"
+          vectorEffect="non-scaling-stroke"
+          data-resize-handle={handle.value}
+          style={{ cursor: handle.cursor }}
+        />
+      ))}
+    </g>
   );
 }
 
@@ -452,13 +572,23 @@ function DrawingCanvas({
   const drawingRef = useRef(false);
   const erasingRef = useRef(false);
   const movingRef = useRef(false);
+  const resizingRef = useRef(false);
+  const marqueeSelectingRef = useRef(false);
   const moveChangedRef = useRef(false);
   const moveLastPointRef = useRef<SketchPoint | null>(null);
   const moveStartRef = useRef<SketchElement[]>(sketch.elements);
   const moveWorkingRef = useRef<SketchElement[]>(sketch.elements);
+  const resizeAnchorRef = useRef<SketchPoint | null>(null);
+  const resizeStartDistanceRef = useRef(1);
+  const resizeStartElementsRef = useRef<SketchElement[]>(sketch.elements);
+  const resizeWorkingRef = useRef<SketchElement[]>(sketch.elements);
+  const resizeSelectionIdsRef = useRef<string[]>([]);
+  const marqueeStartRef = useRef<SketchPoint | null>(null);
+  const marqueeBaseSelectionRef = useRef<string[]>([]);
   const elementsRef = useRef<SketchElement[]>(sketch.elements);
   const historyRef = useRef<SketchElement[][]>([sketch.elements]);
   const historyIndexRef = useRef(0);
+  const textEditorFontSizeRef = useRef(TEXT_SIZES[2]);
   const [elements, setElements] = useState<SketchElement[]>(sketch.elements);
   const [draft, setDraft] = useState<SketchElement | null>(null);
   const [tool, setTool] = useState<SketchTool>("pen");
@@ -483,7 +613,12 @@ function DrawingCanvas({
   const [textEditorColor, setTextEditorColor] = useState(COLORS[0].value);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [eraserPoint, setEraserPoint] = useState<SketchPoint | null>(null);
-  const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+  const [selectedElementIds, setSelectedElementIds] = useState<string[]>([]);
+  const selectedElementIdsRef = useRef<string[]>([]);
+  const [selectionMarquee, setSelectionMarquee] = useState<{
+    start: SketchPoint;
+    end: SketchPoint;
+  } | null>(null);
 
   const penSize = PEN_SIZES[toolSizeIndexes.pen];
   const textSize = TEXT_SIZES[toolSizeIndexes.text];
@@ -491,9 +626,11 @@ function DrawingCanvas({
   const shapeToolActive = tool === "rectangle" || tool === "ellipse";
   const activePaletteColor =
     shapeToolActive && shapeColorTarget === "fill" ? fillColor : color;
-  const selectedElement = elements.find(
-    (element) => element.id === selectedElementId,
+  const selectedElements = elements.filter((element) =>
+    selectedElementIds.includes(element.id),
   );
+  const selectedElement =
+    selectedElements.length === 1 ? selectedElements[0] : undefined;
   const elementsWithoutEditingText = editingTextId
     ? elements.filter((element) => element.id !== editingTextId)
     : elements;
@@ -520,7 +657,9 @@ function DrawingCanvas({
     setTextPreviewFontSize(16);
     setEditingTextId(null);
     cancellingTextEditRef.current = false;
-    setSelectedElementId(null);
+    setSelectedElementIds([]);
+    selectedElementIdsRef.current = [];
+    setSelectionMarquee(null);
     historyRef.current = [sketch.elements];
     historyIndexRef.current = 0;
     setCanUndo(false);
@@ -553,13 +692,14 @@ function DrawingCanvas({
   }, [openSizeMenu]);
 
   useEffect(() => {
-    if (
-      selectedElementId &&
-      !elements.some((element) => element.id === selectedElementId)
-    ) {
-      setSelectedElementId(null);
+    const next = selectedElementIds.filter((id) =>
+      elements.some((element) => element.id === id),
+    );
+    if (next.length !== selectedElementIds.length) {
+      setSelectedElementIds(next);
+      selectedElementIdsRef.current = next;
     }
-  }, [elements, selectedElementId]);
+  }, [elements, selectedElementIds]);
 
   const pointFromEvent = (
     event:
@@ -598,7 +738,8 @@ function DrawingCanvas({
     const canvasScale = Math.hypot(matrix.c, matrix.d);
 
     cancellingTextEditRef.current = false;
-    setSelectedElementId(null);
+    setSelectedElementIds([]);
+    selectedElementIdsRef.current = [];
     setEditingTextId(element.id);
     setTextPoint(element.point);
     setTextPosition({
@@ -606,6 +747,7 @@ function DrawingCanvas({
       y: screenPoint.y - rect.top,
     });
     setTextValue(element.text);
+    textEditorFontSizeRef.current = element.fontSize;
     setTextEditorFontSize(element.fontSize);
     setTextEditorColor(element.color);
     setTextPreviewFontSize(Math.max(element.fontSize * canvasScale, 8));
@@ -655,8 +797,34 @@ function DrawingCanvas({
       if (editingText) return;
 
       if (event.key === "Escape") {
-        setSelectedElementId(null);
+        setSelectedElementIds([]);
+        selectedElementIdsRef.current = [];
         setOpenSizeMenu(null);
+        return;
+      }
+
+      if (
+        (event.key === "Delete" || event.key === "Backspace") &&
+        selectedElementIds.length > 0
+      ) {
+        event.preventDefault();
+        const selectedIds = new Set(selectedElementIds);
+        const next = elementsRef.current.filter(
+          (element) => !selectedIds.has(element.id),
+        );
+        if (next.length === elementsRef.current.length) return;
+
+        const history = historyRef.current.slice(0, historyIndexRef.current + 1);
+        history.push(next);
+        historyRef.current = history;
+        historyIndexRef.current = history.length - 1;
+        setElements(next);
+        elementsRef.current = next;
+        setSelectedElementIds([]);
+        selectedElementIdsRef.current = [];
+        setCanUndo(true);
+        setCanRedo(false);
+        onChange(next);
         return;
       }
 
@@ -684,7 +852,7 @@ function DrawingCanvas({
 
     window.addEventListener("keydown", handleCanvasShortcut);
     return () => window.removeEventListener("keydown", handleCanvasShortcut);
-  }, [onChange]);
+  }, [onChange, selectedElementIds]);
 
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (event.button !== 0 && event.pointerType === "mouse") return;
@@ -692,11 +860,65 @@ function DrawingCanvas({
 
     if (tool === "select") {
       event.preventDefault();
+      const resizeHandle =
+        event.target instanceof SVGElement
+          ? (event.target.getAttribute("data-resize-handle") as ResizeHandle | null)
+          : null;
+      if (resizeHandle && selectedElements.length > 0) {
+        const bounds = paddedSelectionBounds(selectedElements);
+        if (!bounds) return;
+        const anchor = {
+          x: resizeHandle.includes("w") ? bounds.right : bounds.left,
+          y: resizeHandle.includes("n") ? bounds.bottom : bounds.top,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        resizingRef.current = true;
+        moveChangedRef.current = false;
+        resizeAnchorRef.current = anchor;
+        resizeStartDistanceRef.current = Math.max(
+          Math.hypot(point.x - anchor.x, point.y - anchor.y),
+          1,
+        );
+        resizeStartElementsRef.current = elementsRef.current;
+        resizeWorkingRef.current = elementsRef.current;
+        resizeSelectionIdsRef.current = selectedElementIdsRef.current;
+        return;
+      }
+
       const selected = [...elementsRef.current]
         .reverse()
-        .find((element) => eraserHitsElement(element, point, 14));
-      setSelectedElementId(selected?.id ?? null);
-      if (!selected) return;
+        .find((element) => selectionHitsElement(element, point));
+
+      if (event.shiftKey && selected) {
+        const next = selectedElementIdsRef.current.includes(selected.id)
+          ? selectedElementIdsRef.current.filter((id) => id !== selected.id)
+          : [...selectedElementIdsRef.current, selected.id];
+        setSelectedElementIds(next);
+        selectedElementIdsRef.current = next;
+        return;
+      }
+
+      if (!selected) {
+        const baseSelection = event.shiftKey
+          ? selectedElementIdsRef.current
+          : [];
+        if (!event.shiftKey) {
+          setSelectedElementIds([]);
+          selectedElementIdsRef.current = [];
+        }
+        event.currentTarget.setPointerCapture(event.pointerId);
+        marqueeSelectingRef.current = true;
+        marqueeStartRef.current = point;
+        marqueeBaseSelectionRef.current = baseSelection;
+        setSelectionMarquee({ start: point, end: point });
+        return;
+      }
+
+      const nextSelection = selectedElementIdsRef.current.includes(selected.id)
+        ? selectedElementIdsRef.current
+        : [selected.id];
+      setSelectedElementIds(nextSelection);
+      selectedElementIdsRef.current = nextSelection;
 
       event.currentTarget.setPointerCapture(event.pointerId);
       movingRef.current = true;
@@ -723,6 +945,7 @@ function DrawingCanvas({
       const canvasScale = matrix ? Math.hypot(matrix.c, matrix.d) : 1;
       setTextPosition({ x: event.clientX - rect.left, y: event.clientY - rect.top });
       setTextPreviewFontSize(Math.max(textSize * canvasScale, 8));
+      textEditorFontSizeRef.current = textSize;
       setTextEditorFontSize(textSize);
       setTextEditorColor(color);
       setTextValue("");
@@ -733,7 +956,8 @@ function DrawingCanvas({
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
       erasingRef.current = true;
-      setSelectedElementId(null);
+      setSelectedElementIds([]);
+      selectedElementIdsRef.current = [];
       setDraft({
         id: generateId(),
         type: "erase",
@@ -765,14 +989,59 @@ function DrawingCanvas({
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
     const point = pointFromEvent(event);
     if (tool === "select") {
-      if (!movingRef.current || !selectedElementId || !moveLastPointRef.current) {
+      if (resizingRef.current && resizeAnchorRef.current) {
+        const scale = Math.max(
+          0.05,
+          Math.hypot(
+            point.x - resizeAnchorRef.current.x,
+            point.y - resizeAnchorRef.current.y,
+          ) / resizeStartDistanceRef.current,
+        );
+        const selectedIds = new Set(resizeSelectionIdsRef.current);
+        const next = resizeStartElementsRef.current.map((element) =>
+          selectedIds.has(element.id)
+            ? scaleElement(element, resizeAnchorRef.current!, scale)
+            : element,
+        );
+        resizeWorkingRef.current = next;
+        moveChangedRef.current = true;
+        setElements(next);
+        elementsRef.current = next;
+        return;
+      }
+
+      if (marqueeSelectingRef.current && marqueeStartRef.current) {
+        const marqueeBounds = {
+          left: Math.min(marqueeStartRef.current.x, point.x),
+          right: Math.max(marqueeStartRef.current.x, point.x),
+          top: Math.min(marqueeStartRef.current.y, point.y),
+          bottom: Math.max(marqueeStartRef.current.y, point.y),
+        };
+        const withinMarquee = elementsRef.current
+          .filter(
+            (element) =>
+              element.type !== "erase" &&
+              boundsOverlap(elementBounds(element), marqueeBounds),
+          )
+          .map((element) => element.id);
+        const nextSelection = Array.from(
+          new Set([...marqueeBaseSelectionRef.current, ...withinMarquee]),
+        );
+        setSelectedElementIds(nextSelection);
+        selectedElementIdsRef.current = nextSelection;
+        setSelectionMarquee({ start: marqueeStartRef.current, end: point });
+        return;
+      }
+
+      if (!movingRef.current || !moveLastPointRef.current) {
         return;
       }
       const dx = point.x - moveLastPointRef.current.x;
       const dy = point.y - moveLastPointRef.current.y;
       if (dx === 0 && dy === 0) return;
+      const selectedIds = new Set(selectedElementIdsRef.current);
       const next = moveWorkingRef.current.map((element) =>
-        element.id === selectedElementId ? moveElement(element, dx, dy) : element,
+        selectedIds.has(element.id) ? moveElement(element, dx, dy) : element,
       );
       moveWorkingRef.current = next;
       moveLastPointRef.current = point;
@@ -817,6 +1086,29 @@ function DrawingCanvas({
   };
 
   const handlePointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (resizingRef.current) {
+      resizingRef.current = false;
+      resizeAnchorRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      if (moveChangedRef.current) {
+        commit(resizeWorkingRef.current);
+      } else {
+        setElements(resizeStartElementsRef.current);
+        elementsRef.current = resizeStartElementsRef.current;
+      }
+      return;
+    }
+    if (marqueeSelectingRef.current) {
+      marqueeSelectingRef.current = false;
+      marqueeStartRef.current = null;
+      setSelectionMarquee(null);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      return;
+    }
     if (movingRef.current) {
       movingRef.current = false;
       moveLastPointRef.current = null;
@@ -866,21 +1158,26 @@ function DrawingCanvas({
     if (textPoint && trimmed) {
       if (editingTextId) {
         commit(
-          elements.map((element) =>
+          elementsRef.current.map((element) =>
             element.id === editingTextId && element.type === "text"
-              ? { ...element, text: trimmed }
+              ? {
+                  ...element,
+                  text: trimmed,
+                  fontSize: textEditorFontSizeRef.current,
+                  color: textEditorColor,
+                }
               : element,
           ),
         );
       } else {
         commit([
-          ...elements,
+          ...elementsRef.current,
           {
             id: generateId(),
             type: "text",
             point: textPoint,
             text: trimmed,
-            fontSize: textEditorFontSize,
+            fontSize: textEditorFontSizeRef.current,
             color: textEditorColor,
             strokeWidth: 1,
           },
@@ -930,11 +1227,21 @@ function DrawingCanvas({
               );
             }
 
-            const selectedSize = toolSizeIndexes[value];
+            const selectedTextSize =
+              value === "text" && textPoint
+                ? TEXT_SIZES.indexOf(textEditorFontSize)
+                : value === "text" && selectedElement?.type === "text"
+                  ? TEXT_SIZES.indexOf(selectedElement.fontSize)
+                  : -1;
+            const selectedSize =
+              selectedTextSize >= 0 ? selectedTextSize : toolSizeIndexes[value];
             return (
               <div key={value} className="relative flex shrink-0" data-size-menu>
                 <button
                   type="button"
+                  onPointerDown={(event) => {
+                    if (value === "text" && textPoint) event.preventDefault();
+                  }}
                   onClick={() => {
                     setTool(value);
                     setOpenSizeMenu(null);
@@ -948,6 +1255,9 @@ function DrawingCanvas({
                 </button>
                 <button
                   type="button"
+                  onPointerDown={(event) => {
+                    if (value === "text" && textPoint) event.preventDefault();
+                  }}
                   onClick={() => {
                     setTool(value);
                     setOpenSizeMenu((current) => (current === value ? null : value));
@@ -974,12 +1284,54 @@ function DrawingCanvas({
                         aria-label={sizeLabel}
                         aria-checked={selectedSize === index}
                         title={sizeLabel}
+                        onPointerDown={(event) => {
+                          if (value === "text" && textPoint) event.preventDefault();
+                        }}
                         onClick={() => {
                           setToolSizeIndexes((current) => ({
                             ...current,
                             [value]: index,
                           }));
-                          setTool(value);
+                          if (value === "text" && textPoint) {
+                            const nextFontSize = TEXT_SIZES[index];
+                            const matrix = svgRef.current?.getScreenCTM();
+                            const canvasScale = matrix
+                              ? Math.hypot(matrix.c, matrix.d)
+                              : 1;
+                            textEditorFontSizeRef.current = nextFontSize;
+                            setTextEditorFontSize(nextFontSize);
+                            setTextPreviewFontSize(
+                              Math.max(nextFontSize * canvasScale, 8),
+                            );
+                            if (editingTextId) {
+                              commit(
+                                elementsRef.current.map((element) =>
+                                  element.id === editingTextId &&
+                                  element.type === "text"
+                                    ? { ...element, fontSize: nextFontSize }
+                                    : element,
+                                ),
+                              );
+                            }
+                            setTool("text");
+                            setOpenSizeMenu(null);
+                            return;
+                          }
+                          const resizingSelectedText =
+                            value === "text" && selectedElement?.type === "text";
+                          if (resizingSelectedText) {
+                            commit(
+                              elementsRef.current.map((element) =>
+                                element.id === selectedElement.id &&
+                                element.type === "text"
+                                  ? { ...element, fontSize: TEXT_SIZES[index] }
+                                  : element,
+                              ),
+                            );
+                            setTool("select");
+                          } else {
+                            setTool(value);
+                          }
                           setOpenSizeMenu(null);
                         }}
                         className={`relative flex w-full items-center justify-center px-2 py-1.5 hover:bg-muted ${
@@ -1169,7 +1521,21 @@ function DrawingCanvas({
           </defs>
           <rect width="100%" height="100%" fill="url(#sketch-grid)" />
           {renderDrawingLayers(elementsWithEraseDraft)}
-          {tool === "select" && selectedElement && renderSelection(selectedElement)}
+          {tool === "select" && renderSelection(selectedElements)}
+          {tool === "select" && selectionMarquee && (
+            <rect
+              x={Math.min(selectionMarquee.start.x, selectionMarquee.end.x)}
+              y={Math.min(selectionMarquee.start.y, selectionMarquee.end.y)}
+              width={Math.abs(selectionMarquee.end.x - selectionMarquee.start.x)}
+              height={Math.abs(selectionMarquee.end.y - selectionMarquee.start.y)}
+              fill="rgba(25, 113, 194, 0.08)"
+              stroke="#1971c2"
+              strokeWidth="1.5"
+              strokeDasharray="7 5"
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+          )}
           {draft?.type !== "erase" && draft && renderElement(draft)}
           {tool === "eraser" && eraserPoint && (
             <circle
