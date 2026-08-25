@@ -10,6 +10,8 @@ const appStateSchema = z.object({
   memoCollections: z.array(z.unknown()).catch([]),
   sketches: z.array(z.unknown()).catch([]),
   sketchCollections: z.array(z.unknown()).catch([]),
+  calendarEvents: z.array(z.unknown()).catch([]),
+  calendarCategories: z.array(z.unknown()).catch([]),
   lastUpdatedAt: z.number().catch(Date.now()),
 });
 
@@ -24,6 +26,9 @@ function normalizeState(state: unknown): AppState {
     sketches: parsed.sketches as AppState["sketches"],
     sketchCollections:
       parsed.sketchCollections as AppState["sketchCollections"],
+    calendarEvents: parsed.calendarEvents as AppState["calendarEvents"],
+    calendarCategories:
+      parsed.calendarCategories as AppState["calendarCategories"],
     lastUpdatedAt: parsed.lastUpdatedAt,
   };
 }

@@ -95,6 +95,45 @@ const sketchCollectionSchema = z.object({
   order: z.number().int(),
 });
 
+const calendarRecurrenceSchema = z.object({
+  frequency: z.enum(["none", "daily", "weekly", "monthly", "yearly"]),
+  interval: z.number().int().positive(),
+  untilDate: z.string().nullable().optional(),
+});
+
+const calendarEventSourceSchema = z.object({
+  type: z.enum(["manual", "natural-language"]),
+  text: z.string().optional(),
+  section: z.enum(["stickies", "memos", "sketches"]).optional(),
+  sourceId: id.nullable().optional(),
+});
+
+const calendarEventSchema = z.object({
+  id,
+  title: z.string(),
+  date: z.string(),
+  startTime: z.string().nullable(),
+  endTime: z.string().nullable(),
+  categoryId: id.nullable(),
+  recurrence: calendarRecurrenceSchema,
+  description: z.string(),
+  location: z.string().nullable(),
+  deletedOccurrenceDates: z.array(z.string()),
+  source: calendarEventSourceSchema.nullable().optional(),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+  order: z.number().int(),
+});
+
+const calendarCategorySchema = z.object({
+  id,
+  title: z.string(),
+  color: z.string(),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+  order: z.number().int(),
+});
+
 export const workspaceMutationActionSchema = z.enum([
   "setTimeRange",
   "addSticky",
@@ -131,6 +170,14 @@ export const workspaceMutationActionSchema = z.enum([
   "addSketchCollection",
   "renameSketchCollection",
   "deleteSketchCollection",
+  "addCalendarEvent",
+  "updateCalendarEvent",
+  "deleteCalendarEvent",
+  "deleteCalendarOccurrence",
+  "deleteCalendarFutureOccurrences",
+  "addCalendarCategory",
+  "updateCalendarCategory",
+  "deleteCalendarCategory",
 ]);
 
 export const workspaceMutationSchema = z.discriminatedUnion("action", [
@@ -311,6 +358,43 @@ export const workspaceMutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("deleteSketchCollection"),
     payload: z.object({ collectionId: id }),
+  }),
+  z.object({
+    action: z.literal("addCalendarEvent"),
+    payload: z.object({ event: calendarEventSchema }),
+  }),
+  z.object({
+    action: z.literal("updateCalendarEvent"),
+    payload: z.object({ eventId: id, event: calendarEventSchema }),
+  }),
+  z.object({
+    action: z.literal("deleteCalendarEvent"),
+    payload: z.object({ eventId: id }),
+  }),
+  z.object({
+    action: z.literal("deleteCalendarOccurrence"),
+    payload: z.object({ eventId: id, date: z.string(), updatedAt: timestamp }),
+  }),
+  z.object({
+    action: z.literal("deleteCalendarFutureOccurrences"),
+    payload: z.object({ eventId: id, fromDate: z.string(), updatedAt: timestamp }),
+  }),
+  z.object({
+    action: z.literal("addCalendarCategory"),
+    payload: z.object({ category: calendarCategorySchema }),
+  }),
+  z.object({
+    action: z.literal("updateCalendarCategory"),
+    payload: z.object({
+      categoryId: id,
+      title: z.string(),
+      color: z.string(),
+      updatedAt: timestamp,
+    }),
+  }),
+  z.object({
+    action: z.literal("deleteCalendarCategory"),
+    payload: z.object({ categoryId: id }),
   }),
 ]);
 
