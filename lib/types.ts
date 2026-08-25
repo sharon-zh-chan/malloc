@@ -102,6 +102,52 @@ export interface SketchCollection {
   order: number;
 }
 
+export type CalendarRecurrenceFrequency =
+  | "none"
+  | "daily"
+  | "weekly"
+  | "monthly"
+  | "yearly";
+
+export interface CalendarRecurrenceRule {
+  frequency: CalendarRecurrenceFrequency;
+  interval: number;
+  untilDate?: string | null;
+}
+
+export interface CalendarEventSource {
+  type: "manual" | "natural-language";
+  text?: string;
+  section?: "stickies" | "memos" | "sketches";
+  sourceId?: string | null;
+}
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  date: string;
+  startTime: string | null;
+  endTime: string | null;
+  categoryId: string | null;
+  recurrence: CalendarRecurrenceRule;
+  description: string;
+  location: string | null;
+  deletedOccurrenceDates: string[];
+  source?: CalendarEventSource | null;
+  createdAt: number;
+  updatedAt: number;
+  order: number;
+}
+
+export interface CalendarCategory {
+  id: string;
+  title: string;
+  color: string;
+  createdAt: number;
+  updatedAt: number;
+  order: number;
+}
+
 export interface AppState {
   timeRange: string;
   blocks: TodoBlock[];
@@ -109,6 +155,8 @@ export interface AppState {
   memoCollections: MemoCollection[];
   sketches: Sketch[];
   sketchCollections: SketchCollection[];
+  calendarEvents: CalendarEvent[];
+  calendarCategories: CalendarCategory[];
   lastUpdatedAt: number;
 }
 

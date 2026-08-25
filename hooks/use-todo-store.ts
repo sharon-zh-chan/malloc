@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   AppState,
+  CalendarCategory,
+  CalendarEvent,
   MemoCollection,
   Sketch,
   SketchCollection,
@@ -52,7 +54,11 @@ type AnalyticsEventName =
   | "sketch_restored"
   | "sketch_deleted"
   | "sketch_collection_created"
-  | "sketch_collection_deleted";
+  | "sketch_collection_deleted"
+  | "calendar_event_created"
+  | "calendar_event_deleted"
+  | "calendar_category_created"
+  | "calendar_category_deleted";
 
 type AnalyticsProperties = Record<string, string | number | boolean | null>;
 
@@ -156,6 +162,8 @@ function createDefaultState(): AppState {
     memoCollections: [],
     sketches: [],
     sketchCollections: [],
+    calendarEvents: [],
+    calendarCategories: [],
     lastUpdatedAt: 0,
   };
 }
@@ -200,6 +208,31 @@ function migrateAppState(raw: Partial<AppState>): AppState {
       : [],
     sketchCollections: Array.isArray(raw.sketchCollections)
       ? raw.sketchCollections
+      : [],
+    calendarEvents: Array.isArray(raw.calendarEvents)
+      ? raw.calendarEvents.map((event) => ({
+          ...event,
+          startTime: event.startTime ?? null,
+          endTime: event.endTime ?? null,
+          categoryId: event.categoryId ?? null,
+          recurrence: {
+            frequency: event.recurrence?.frequency ?? "none",
+            interval: Math.max(1, event.recurrence?.interval ?? 1),
+            untilDate: event.recurrence?.untilDate ?? null,
+          },
+          description: event.description ?? "",
+          location: event.location ?? null,
+          deletedOccurrenceDates: Array.isArray(event.deletedOccurrenceDates)
+            ? event.deletedOccurrenceDates
+            : [],
+          source: event.source ?? null,
+        }))
+      : [],
+    calendarCategories: Array.isArray(raw.calendarCategories)
+      ? raw.calendarCategories.map((category) => ({
+          ...category,
+          color: category.color ?? "#0057d9",
+        }))
       : [],
     lastUpdatedAt: raw.lastUpdatedAt || Date.now(),
   };
@@ -364,6 +397,20 @@ async function createInitialWorkspace(
     }
   }
 
+  for (const category of state.calendarCategories) {
+    response = await applyInitialWorkspaceMutation(supabase, {
+      action: "addCalendarCategory",
+      payload: { category },
+    });
+  }
+
+  for (const event of state.calendarEvents) {
+    response = await applyInitialWorkspaceMutation(supabase, {
+      action: "addCalendarEvent",
+      payload: { event },
+    });
+  }
+
   return response;
 }
 
@@ -401,6 +448,12 @@ function mutationQueueKey(mutation: WorkspaceMutation): string | null {
       return `${mutation.action}:${mutation.payload.sketchId}`;
     case "renameSketchCollection":
       return `${mutation.action}:${mutation.payload.collectionId}`;
+    case "updateCalendarEvent":
+    case "deleteCalendarOccurrence":
+    case "deleteCalendarFutureOccurrences":
+      return `${mutation.action}:${mutation.payload.eventId}`;
+    case "updateCalendarCategory":
+      return `${mutation.action}:${mutation.payload.categoryId}`;
     default:
       return null;
   }
@@ -1917,6 +1970,243 @@ export function useTodoStore() {
     [applyLocalMutation, state.sketchCollections.length, trackProductEvent],
   );
 
+  const addCalendarEvent = useCallback(
+    (
+      eventInput: Omit<CalendarEvent, "id" | "createdAt" | "updatedAt" | "order">,
+    ) => {
+      const trimmed = eventInput.title.trim();
+      if (!trimmed) return null;
+
+      const now = Date.now();
+      const event: CalendarEvent = {
+        ...eventInput,
+        id: generateId(),
+        title: trimmed,
+        description: eventInput.description.trim(),
+        location: eventInput.location?.trim() || null,
+        recurrence: {
+          frequency: eventInput.recurrence.frequency,
+          interval: Math.max(1, eventInput.recurrence.interval),
+          untilDate: eventInput.recurrence.untilDate || null,
+        },
+        deletedOccurrenceDates: [],
+        createdAt: now,
+        updatedAt: now,
+        order: state.calendarEvents.length,
+      };
+
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          calendarEvents: [...prev.calendarEvents, event],
+        }),
+        { action: "addCalendarEvent", payload: { event } },
+      );
+      void trackProductEvent("calendar_event_created", {
+        has_category: Boolean(event.categoryId),
+        recurrence: event.recurrence.frequency,
+      });
+      return event.id;
+    },
+    [applyLocalMutation, state.calendarEvents.length, trackProductEvent],
+  );
+
+  const updateCalendarEvent = useCallback(
+    (event: CalendarEvent) => {
+      const updatedAt = Date.now();
+      const nextEvent: CalendarEvent = {
+        ...event,
+        title: event.title.trim(),
+        description: event.description.trim(),
+        location: event.location?.trim() || null,
+        recurrence: {
+          frequency: event.recurrence.frequency,
+          interval: Math.max(1, event.recurrence.interval),
+          untilDate: event.recurrence.untilDate || null,
+        },
+        updatedAt,
+      };
+      if (!nextEvent.title) return;
+
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          calendarEvents: prev.calendarEvents.map((candidate) =>
+            candidate.id === nextEvent.id ? nextEvent : candidate,
+          ),
+        }),
+        {
+          action: "updateCalendarEvent",
+          payload: { eventId: nextEvent.id, event: nextEvent },
+        },
+      );
+    },
+    [applyLocalMutation],
+  );
+
+  const deleteCalendarEvent = useCallback(
+    (eventId: string) => {
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          calendarEvents: prev.calendarEvents
+            .filter((event) => event.id !== eventId)
+            .map((event, order) => ({ ...event, order })),
+        }),
+        { action: "deleteCalendarEvent", payload: { eventId } },
+      );
+      void trackProductEvent("calendar_event_deleted", {
+        events_count_after: Math.max(state.calendarEvents.length - 1, 0),
+      });
+    },
+    [applyLocalMutation, state.calendarEvents.length, trackProductEvent],
+  );
+
+  const deleteCalendarOccurrence = useCallback(
+    (eventId: string, date: string) => {
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          calendarEvents: prev.calendarEvents.map((event) =>
+            event.id === eventId
+              ? {
+                  ...event,
+                  deletedOccurrenceDates: Array.from(
+                    new Set([...event.deletedOccurrenceDates, date]),
+                  ).sort(),
+                  updatedAt,
+                }
+              : event,
+          ),
+        }),
+        {
+          action: "deleteCalendarOccurrence",
+          payload: { eventId, date, updatedAt },
+        },
+      );
+      void trackProductEvent("calendar_event_deleted", { scope: "occurrence" });
+    },
+    [applyLocalMutation, trackProductEvent],
+  );
+
+  const deleteCalendarFutureOccurrences = useCallback(
+    (eventId: string, fromDate: string) => {
+      const updatedAt = Date.now();
+      const previousDate = new Date(`${fromDate}T00:00:00`);
+      previousDate.setDate(previousDate.getDate() - 1);
+      const untilDate = previousDate.toISOString().slice(0, 10);
+
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          calendarEvents: prev.calendarEvents.map((event) =>
+            event.id === eventId
+              ? {
+                  ...event,
+                  recurrence: {
+                    ...event.recurrence,
+                    untilDate,
+                  },
+                  updatedAt,
+                }
+              : event,
+          ),
+        }),
+        {
+          action: "deleteCalendarFutureOccurrences",
+          payload: { eventId, fromDate, updatedAt },
+        },
+      );
+      void trackProductEvent("calendar_event_deleted", { scope: "future" });
+    },
+    [applyLocalMutation, trackProductEvent],
+  );
+
+  const addCalendarCategory = useCallback(
+    (title: string, color: string) => {
+      const trimmed = title.trim();
+      if (!trimmed) return null;
+      const existing = state.calendarCategories.find(
+        (category) => category.title.toLowerCase() === trimmed.toLowerCase(),
+      );
+      if (existing) return existing.id;
+
+      const now = Date.now();
+      const category: CalendarCategory = {
+        id: generateId(),
+        title: trimmed,
+        color,
+        createdAt: now,
+        updatedAt: now,
+        order: state.calendarCategories.length,
+      };
+
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          calendarCategories: [...prev.calendarCategories, category],
+        }),
+        { action: "addCalendarCategory", payload: { category } },
+      );
+      void trackProductEvent("calendar_category_created", {
+        calendar_categories_count_after: state.calendarCategories.length + 1,
+      });
+      return category.id;
+    },
+    [applyLocalMutation, state.calendarCategories, trackProductEvent],
+  );
+
+  const updateCalendarCategory = useCallback(
+    (categoryId: string, title: string, color: string) => {
+      const trimmed = title.trim();
+      if (!trimmed) return;
+      const updatedAt = Date.now();
+
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          calendarCategories: prev.calendarCategories.map((category) =>
+            category.id === categoryId
+              ? { ...category, title: trimmed, color, updatedAt }
+              : category,
+          ),
+        }),
+        {
+          action: "updateCalendarCategory",
+          payload: { categoryId, title: trimmed, color, updatedAt },
+        },
+      );
+    },
+    [applyLocalMutation],
+  );
+
+  const deleteCalendarCategory = useCallback(
+    (categoryId: string) => {
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          calendarCategories: prev.calendarCategories
+            .filter((category) => category.id !== categoryId)
+            .map((category, order) => ({ ...category, order })),
+          calendarEvents: prev.calendarEvents.map((event) =>
+            event.categoryId === categoryId
+              ? { ...event, categoryId: null, updatedAt: Date.now() }
+              : event,
+          ),
+        }),
+        { action: "deleteCalendarCategory", payload: { categoryId } },
+      );
+      void trackProductEvent("calendar_category_deleted", {
+        calendar_categories_count_after: Math.max(
+          state.calendarCategories.length - 1,
+          0,
+        ),
+      });
+    },
+    [applyLocalMutation, state.calendarCategories.length, trackProductEvent],
+  );
+
   return {
     state,
     hydrated,
@@ -1963,6 +2253,14 @@ export function useTodoStore() {
     addSketchCollection,
     updateSketchCollectionTitle,
     deleteSketchCollection,
+    addCalendarEvent,
+    updateCalendarEvent,
+    deleteCalendarEvent,
+    deleteCalendarOccurrence,
+    deleteCalendarFutureOccurrences,
+    addCalendarCategory,
+    updateCalendarCategory,
+    deleteCalendarCategory,
     trackProductEvent,
   };
 }

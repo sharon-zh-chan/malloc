@@ -11,6 +11,9 @@ import { LoggedOutScreen } from "./logged-out-screen";
 import { TextBlocksPage } from "./text-blocks-page";
 import { HistoryPage } from "./history-page";
 import { SketchpadPage } from "./sketchpad-page";
+import { CalendarPage } from "./calendar-page";
+import { CalendarEventPopover } from "./calendar-event-popover";
+import { CalendarPlus } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -39,6 +42,13 @@ type DragData = {
 };
 
 const taskStatuses = ["todo", "completed", "deleted"] as const;
+
+function getTodayDateId() {
+  const today = new Date();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${today.getFullYear()}-${month}-${day}`;
+}
 
 function getGroupedTasks(items: TodoItem[]) {
   const topLevelItems = items.filter((item) => !item.parentTaskId);
@@ -137,16 +147,22 @@ export function Dashboard() {
     addSketchCollection,
     updateSketchCollectionTitle,
     deleteSketchCollection,
+    addCalendarEvent,
+    updateCalendarEvent,
+    deleteCalendarEvent,
+    deleteCalendarOccurrence,
+    deleteCalendarFutureOccurrences,
     trackProductEvent,
   } = useTodoStore();
 
   const [activeView, setActiveView] = useState<
-    "stickies" | "memos" | "sketches" | "history"
+    "stickies" | "memos" | "sketches" | "calendar" | "history"
   >("stickies");
   const [selectedTextBlockId, setSelectedTextBlockId] = useState<string | null>(
     null,
   );
   const [selectedSketchId, setSelectedSketchId] = useState<string | null>(null);
+  const [calendarQuickAddOpen, setCalendarQuickAddOpen] = useState(false);
   const [logoutRedirecting, setLogoutRedirecting] = useState(false);
   const [taskDropTargetStickyId, setTaskDropTargetStickyId] = useState<
     string | null
@@ -203,22 +219,23 @@ export function Dashboard() {
         } else if (activeView === "memos") {
           const memoId = addTextBlock("Untitled Note");
           if (memoId) setSelectedTextBlockId(memoId);
-        } else {
+        } else if (activeView === "sketches") {
           const sketchId = addSketch("Untitled sketch");
           if (sketchId) setSelectedSketchId(sketchId);
         }
         return;
       }
 
-      if (event.altKey && !modifier && ["1", "2", "3"].includes(event.key)) {
+      if (event.altKey && !modifier && ["1", "2", "3", "4"].includes(event.key)) {
         event.preventDefault();
         const nextView = (
           {
             "1": "stickies",
             "2": "memos",
             "3": "sketches",
+            "4": "calendar",
           } as const
-        )[event.key as "1" | "2" | "3"];
+        )[event.key as "1" | "2" | "3" | "4"];
         setActiveView(nextView);
         void trackProductEvent("view_switched", { view: nextView });
       }
@@ -508,6 +525,23 @@ export function Dashboard() {
             <button
               type="button"
               role="tab"
+              aria-selected={activeView === "calendar"}
+              title="Calendar (Alt+4)"
+              onClick={() => {
+                setActiveView("calendar");
+                void trackProductEvent("view_switched", { view: "calendar" });
+              }}
+              className={`border-r border-foreground px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
+                activeView === "calendar"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-background hover:text-foreground"
+              }`}
+            >
+              Calendar
+            </button>
+            <button
+              type="button"
+              role="tab"
               aria-selected={activeView === "history"}
               onClick={() => {
                 setActiveView("history");
@@ -523,18 +557,29 @@ export function Dashboard() {
             </button>
           </div>
 
-          {(activeView === "stickies" || activeView === "memos") && (
-            <GlobalButtons
-              mode={activeView}
-              blocks={activeBlocks}
-              memoCollections={state.memoCollections}
-              onAddBlock={addBlock}
-              onAddTextBlock={addTextBlock}
-              onSelectTextBlock={setSelectedTextBlockId}
-              onAddMemoCollection={addMemoCollection}
-              onClearArchivedTasks={clearAndArchive}
-            />
-          )}
+          <div className="flex items-center gap-2 py-1">
+            {(activeView === "stickies" || activeView === "memos") && (
+              <GlobalButtons
+                mode={activeView}
+                blocks={activeBlocks}
+                memoCollections={state.memoCollections}
+                onAddBlock={addBlock}
+                onAddTextBlock={addTextBlock}
+                onSelectTextBlock={setSelectedTextBlockId}
+                onAddMemoCollection={addMemoCollection}
+                onClearArchivedTasks={clearAndArchive}
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => setCalendarQuickAddOpen(true)}
+              className="sketchy-btn flex h-8 w-8 items-center justify-center"
+              aria-label="Add calendar event"
+              title="Add calendar event"
+            >
+              <CalendarPlus className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </section>
 
@@ -637,6 +682,15 @@ export function Dashboard() {
             onUpdateCollectionTitle={updateSketchCollectionTitle}
             onDeleteCollection={deleteSketchCollection}
           />
+        ) : activeView === "calendar" ? (
+          <CalendarPage
+            events={state.calendarEvents}
+            onAddEvent={addCalendarEvent}
+            onUpdateEvent={updateCalendarEvent}
+            onDeleteEvent={deleteCalendarEvent}
+            onDeleteOccurrence={deleteCalendarOccurrence}
+            onDeleteFutureOccurrences={deleteCalendarFutureOccurrences}
+          />
         ) : (
           <HistoryPage
             state={state}
@@ -651,6 +705,15 @@ export function Dashboard() {
           />
         )}
       </main>
+
+      <CalendarEventPopover
+        open={calendarQuickAddOpen}
+        date={getTodayDateId()}
+        event={null}
+        onClose={() => setCalendarQuickAddOpen(false)}
+        onAddEvent={addCalendarEvent}
+        onUpdateEvent={updateCalendarEvent}
+      />
 
     </div>
   );
