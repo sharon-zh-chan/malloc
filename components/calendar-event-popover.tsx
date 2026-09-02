@@ -313,7 +313,7 @@ export function CalendarEventPopover({
             {event && onRequestDelete && (
               <button
                 type="button"
-                onClick={() => onRequestDelete(event, draft.date)}
+                onClick={() => onRequestDelete(event, date)}
                 className="flex h-9 items-center gap-2 px-3 text-sm font-semibold text-destructive hover:bg-destructive/10"
               >
                 <Trash2 className="h-4 w-4" />
