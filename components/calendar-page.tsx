@@ -284,10 +284,10 @@ export function CalendarPage({
     });
   };
 
-  const openEvent = (event: CalendarEvent) => {
-    setSelectedDate(event.date);
+  const openEvent = (event: CalendarEvent, date = event.date) => {
+    setSelectedDate(date);
     setEventComposer({
-      date: event.date,
+      date,
       eventId: event.id,
       position: null,
     });
@@ -390,7 +390,7 @@ export function CalendarPage({
                   key={occurrence.id}
                   occurrence={occurrence}
                   color={occurrenceColor(occurrence)}
-                  onOpen={() => openEvent(occurrence.event)}
+                  onOpen={() => openEvent(occurrence.event, occurrence.date)}
                   onDelete={() => setPendingDelete(occurrence)}
                 />
               ))
@@ -441,49 +441,60 @@ export function CalendarPage({
                 const occurrences = occurrencesByDate.get(date) ?? [];
                 const inMonth = day.getMonth() === anchorDate.getMonth();
                 return (
-                  <button
+                  <div
                     key={date}
-                    type="button"
-                    onClick={(clickEvent) =>
-                      openNewEvent(date, clickEvent.currentTarget)
-                    }
-                    className={`min-h-[112px] border-b border-r border-border p-2 text-left transition-colors hover:bg-primary/5 ${
+                    className={`relative min-h-[112px] border-b border-r border-border p-2 transition-colors ${
                       index % 7 === 6 ? "border-r-0" : ""
                     } ${index >= 35 ? "border-b-0" : ""} ${
                       selectedDate === date ? "bg-primary/10" : ""
                     }`}
                   >
-                    <span
-                      className={`inline-flex h-6 min-w-6 items-center justify-center px-1 text-xs font-bold ${
-                        date === todayId
-                          ? "bg-primary text-primary-foreground"
-                          : inMonth
-                            ? "text-foreground"
-                            : "text-muted-foreground/50"
-                      }`}
-                    >
-                      {day.getDate()}
-                    </span>
-                    <div className="mt-2 flex flex-col gap-1">
-                      {occurrences.slice(0, 4).map((occurrence) => (
-                        <span
-                          key={occurrence.id}
-                          className="flex min-w-0 items-center gap-1.5 text-xs text-foreground"
-                        >
-                          <span
-                            className="h-2 w-2 shrink-0 rounded-full"
-                            style={{ backgroundColor: occurrenceColor(occurrence) }}
-                          />
-                          <span className="truncate">{occurrence.event.title}</span>
-                        </span>
-                      ))}
-                      {occurrences.length > 4 && (
-                        <span className="text-xs text-muted-foreground">
-                          +{occurrences.length - 4}
-                        </span>
-                      )}
+                    <button
+                      type="button"
+                      onClick={(clickEvent) =>
+                        openNewEvent(date, clickEvent.currentTarget)
+                      }
+                      className="absolute inset-0 z-0 text-left transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                      aria-label={`Add event on ${longDayLabel(date)}`}
+                    />
+                    <div className="pointer-events-none relative z-10">
+                      <span
+                        className={`inline-flex h-6 min-w-6 items-center justify-center px-1 text-xs font-bold ${
+                          date === todayId
+                            ? "bg-primary text-primary-foreground"
+                            : inMonth
+                              ? "text-foreground"
+                              : "text-muted-foreground/50"
+                        }`}
+                      >
+                        {day.getDate()}
+                      </span>
+                      <div className="mt-2 flex flex-col gap-1">
+                        {occurrences.slice(0, 4).map((occurrence) => (
+                          <button
+                            key={occurrence.id}
+                            type="button"
+                            onClick={() =>
+                              openEvent(occurrence.event, occurrence.date)
+                            }
+                            className="pointer-events-auto flex min-w-0 items-center gap-1.5 text-left text-xs text-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            aria-label={`Open ${occurrence.event.title}`}
+                          >
+                            <span
+                              className="h-2 w-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: occurrenceColor(occurrence) }}
+                            />
+                            <span className="truncate">{occurrence.event.title}</span>
+                          </button>
+                        ))}
+                        {occurrences.length > 4 && (
+                          <span className="text-xs text-muted-foreground">
+                            +{occurrences.length - 4}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -511,7 +522,7 @@ export function CalendarPage({
                   key={occurrence.id}
                   occurrence={occurrence}
                   color={occurrenceColor(occurrence)}
-                  onOpen={() => openEvent(occurrence.event)}
+                  onOpen={() => openEvent(occurrence.event, occurrence.date)}
                   onDelete={() => setPendingDelete(occurrence)}
                 />
               ))
@@ -696,7 +707,7 @@ function DayColumn({
   today: boolean;
   colorForOccurrence: (occurrence: CalendarOccurrence) => string;
   onSelect: (target: HTMLElement) => void;
-  onOpen: (event: CalendarEvent) => void;
+  onOpen: (event: CalendarEvent, date: string) => void;
   onDelete: (event: CalendarEvent) => void;
 }) {
   return (
@@ -729,7 +740,7 @@ function DayColumn({
           >
             <button
               type="button"
-              onClick={() => onOpen(occurrence.event)}
+              onClick={() => onOpen(occurrence.event, occurrence.date)}
               className="flex w-full items-start gap-2 text-left"
             >
               <span
