@@ -4,6 +4,28 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import type { MemoCollection, TextBlock } from "@/lib/types";
 import {
+  DndContext,
+  KeyboardSensor,
+  MeasuringStrategy,
+  PointerSensor,
+  closestCenter,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   AlignCenter,
   AlignLeft,
   AlignRight,
@@ -12,6 +34,7 @@ import {
   ChevronDown,
   ChevronRight,
   FolderPlus,
+  GripVertical,
   Italic,
   List,
   ListOrdered,
@@ -55,6 +78,8 @@ interface TextBlocksPageProps {
   onAddCollection: (title: string) => string | null;
   onUpdateCollectionTitle: (collectionId: string, title: string) => void;
   onDeleteCollection: (collectionId: string) => void;
+  onReorderCollections: (collections: MemoCollection[]) => void;
+  onReorderBlocks: (blocks: TextBlock[]) => void;
 }
 
 const DEFAULT_BLOCK_TITLE = "Untitled Note";
@@ -62,6 +87,9 @@ const UNFILED_LABEL = "No folder";
 const ARCHIVE_LABEL = "Deleted";
 const UNFILED_COLLECTION_KEY = "__unfiled";
 const ARCHIVE_COLLECTION_KEY = "__archive";
+const COLLECTION_SORT_PREFIX = "memo-collection:";
+const COLLECTION_DROP_PREFIX = "memo-collection-drop:";
+const MEMO_SORT_PREFIX = "memo:";
 const FONT_SIZE_OPTIONS = {
   "12": { label: "12", fontSize: "12px" },
   "14": { label: "14", fontSize: "14px" },
@@ -113,6 +141,65 @@ const DEFAULT_FORMATTING_STATE: FormattingState = {
   justifyRight: false,
 };
 
+type SidebarDragData =
+  | {
+      type: "memoCollection";
+      collectionId: string;
+    }
+  | {
+      type: "memoCollectionDropZone";
+      collectionKey: string;
+      collectionId: string | null;
+      archived: boolean;
+    }
+  | {
+      type: "memo";
+      blockId: string;
+      collectionKey: string;
+      collectionId: string | null;
+    };
+
+function collectionSortId(collectionId: string) {
+  return `${COLLECTION_SORT_PREFIX}${collectionId}`;
+}
+
+function collectionDropId(collectionKey: string) {
+  return `${COLLECTION_DROP_PREFIX}${collectionKey}`;
+}
+
+function memoSortId(blockId: string) {
+  return `${MEMO_SORT_PREFIX}${blockId}`;
+}
+
+function getSidebarDragData(value: { data: { current?: unknown } } | null) {
+  return value?.data.current as SidebarDragData | undefined;
+}
+
+const sidebarCollisionDetection: CollisionDetection = (args) => {
+  const activeData = getSidebarDragData(args.active);
+
+  if (activeData?.type === "memoCollection") {
+    return closestCenter({
+      ...args,
+      droppableContainers: args.droppableContainers.filter(
+        (container) => getSidebarDragData(container)?.type === "memoCollection",
+      ),
+    });
+  }
+
+  if (activeData?.type === "memo") {
+    return closestCenter({
+      ...args,
+      droppableContainers: args.droppableContainers.filter((container) => {
+        const data = getSidebarDragData(container);
+        return data?.type === "memo" || data?.type === "memoCollectionDropZone";
+      }),
+    });
+  }
+
+  return closestCenter(args);
+};
+
 export function TextBlocksPage({
   blocks,
   collections,
@@ -128,6 +215,8 @@ export function TextBlocksPage({
   onAddCollection,
   onUpdateCollectionTitle,
   onDeleteCollection,
+  onReorderCollections,
+  onReorderBlocks,
 }: TextBlocksPageProps) {
   const [menuCollapsed, setMenuCollapsed] = useState(false);
   const [addingCollection, setAddingCollection] = useState(false);
@@ -145,10 +234,22 @@ export function TextBlocksPage({
   const sortedBlocks = [...blocks].sort((a, b) => a.order - b.order);
   const sortedCollections = useMemo(
     () =>
-      [...collections].sort((a, b) =>
-        a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
-      ),
+      [...collections].sort((a, b) => {
+        const orderDifference = a.order - b.order;
+        if (orderDifference !== 0) return orderDifference;
+        return a.title.localeCompare(b.title, undefined, {
+          sensitivity: "base",
+        });
+      }),
     [collections],
+  );
+  const collectionSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
   );
   const selectedBlock =
     sortedBlocks.find((block) => block.id === selectedBlockId) ?? null;
@@ -200,20 +301,160 @@ export function TextBlocksPage({
     });
   };
 
-  const moveMemoToCollection = (
+  const getCollectionKeyForBlock = (block: TextBlock) =>
+    block.collectionId && collectionIds.has(block.collectionId)
+      ? block.collectionId
+      : UNFILED_COLLECTION_KEY;
+
+  const getMemoDropTarget = (event: DragEndEvent) => {
+    const overData = getSidebarDragData(event.over);
+    if (!overData) return null;
+
+    if (overData.type === "memo") {
+      return {
+        collectionKey: overData.collectionKey,
+        collectionId: overData.collectionId,
+        overBlockId: overData.blockId,
+        archived: false,
+      };
+    }
+
+    if (overData.type === "memoCollectionDropZone") {
+      return {
+        collectionKey: overData.collectionKey,
+        collectionId: overData.collectionId,
+        overBlockId: null,
+        archived: overData.archived,
+      };
+    }
+
+    return {
+      collectionKey: overData.collectionId,
+      collectionId: overData.collectionId,
+      overBlockId: null,
+      archived: false,
+    };
+  };
+
+  const reorderMemoInSidebar = (
     blockId: string,
-    collectionKey: string,
-    collectionId?: string,
+    target: NonNullable<ReturnType<typeof getMemoDropTarget>>,
   ) => {
-    if (collectionKey === ARCHIVE_COLLECTION_KEY) {
+    if (target.archived) {
       onArchiveBlock(blockId);
       return;
     }
 
-    onUpdateCollection(
-      blockId,
-      collectionKey === UNFILED_COLLECTION_KEY ? null : collectionId ?? null,
+    const movingBlock = activeBlocks.find((block) => block.id === blockId);
+    if (!movingBlock) return;
+
+    const targetCollectionId =
+      target.collectionKey === UNFILED_COLLECTION_KEY
+        ? null
+        : target.collectionId;
+    const movingMemo = {
+      ...movingBlock,
+      collectionId: targetCollectionId,
+    };
+    const groups = new Map<string, TextBlock[]>();
+    const orderedCollectionKeys = [
+      UNFILED_COLLECTION_KEY,
+      ...sortedCollections.map((collection) => collection.id),
+    ];
+
+    for (const collectionKey of orderedCollectionKeys) {
+      groups.set(collectionKey, []);
+    }
+
+    for (const block of activeBlocks) {
+      if (block.id === blockId) continue;
+
+      const collectionKey = getCollectionKeyForBlock(block);
+      groups.set(collectionKey, [...(groups.get(collectionKey) ?? []), block]);
+    }
+
+    const targetBlocks = groups.get(target.collectionKey) ?? [];
+    const targetIndex = target.overBlockId
+      ? targetBlocks.findIndex((block) => block.id === target.overBlockId)
+      : targetBlocks.length;
+    const insertionIndex = targetIndex === -1 ? targetBlocks.length : targetIndex;
+
+    groups.set(target.collectionKey, [
+      ...targetBlocks.slice(0, insertionIndex),
+      movingMemo,
+      ...targetBlocks.slice(insertionIndex),
+    ]);
+
+    onReorderBlocks([
+      ...orderedCollectionKeys.flatMap((collectionKey) =>
+        groups.get(collectionKey) ?? [],
+      ),
+      ...archivedBlocks,
+    ]);
+  };
+
+  const handleSidebarDragStart = (event: DragStartEvent) => {
+    const activeData = getSidebarDragData(event.active);
+    if (activeData?.type === "memo") {
+      setDraggedMemoId(activeData.blockId);
+      setDragOverCollectionKey(activeData.collectionKey);
+    }
+  };
+
+  const handleSidebarDragOver = (event: DragOverEvent) => {
+    const activeData = getSidebarDragData(event.active);
+    if (activeData?.type !== "memo") return;
+
+    const overData = getSidebarDragData(event.over);
+    if (overData?.type === "memo") {
+      setDragOverCollectionKey(overData.collectionKey);
+    } else if (overData?.type === "memoCollectionDropZone") {
+      setDragOverCollectionKey(overData.collectionKey);
+    } else if (overData?.type === "memoCollection") {
+      setDragOverCollectionKey(overData.collectionId);
+    } else {
+      setDragOverCollectionKey(null);
+    }
+  };
+
+  const handleSidebarDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    const activeData = getSidebarDragData(active);
+
+    setDraggedMemoId(null);
+    setDragOverCollectionKey(null);
+
+    if (!over || active.id === over.id) return;
+
+    if (activeData?.type === "memo") {
+      const target = getMemoDropTarget(event);
+      if (target) reorderMemoInSidebar(activeData.blockId, target);
+      return;
+    }
+
+    if (activeData?.type !== "memoCollection") return;
+
+    const oldIndex = sortedCollections.findIndex(
+      (collection) => collection.id === activeData.collectionId,
     );
+    const overData = getSidebarDragData(over);
+    const overCollectionId =
+      overData?.type === "memoCollection"
+        ? overData.collectionId
+        : overData?.type === "memo" || overData?.type === "memoCollectionDropZone"
+          ? overData.collectionId
+          : null;
+    const newIndex = sortedCollections.findIndex(
+      (collection) => collection.id === overCollectionId,
+    );
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    onReorderCollections(arrayMove(sortedCollections, oldIndex, newIndex));
+  };
+
+  const handleSidebarDragCancel = () => {
+    setDraggedMemoId(null);
+    setDragOverCollectionKey(null);
   };
 
   return (
@@ -287,89 +528,91 @@ export function TextBlocksPage({
             )}
 
             <nav className="flex flex-col gap-3" aria-label="Notepad collections">
-              <CollectionGroup
-                title={UNFILED_LABEL}
-                collectionKey={UNFILED_COLLECTION_KEY}
-                blocks={unfiledBlocks}
-                selectedBlockId={selectedBlockId}
-                collapsed={collapsedCollectionKeys.has(
-                  UNFILED_COLLECTION_KEY,
-                )}
-                isDragTarget={
-                  dragOverCollectionKey === UNFILED_COLLECTION_KEY
-                }
-                onSelectBlock={onSelectBlock}
-                onToggleCollapse={toggleCollection}
-                onDropMemo={moveMemoToCollection}
-                onDragStartMemo={setDraggedMemoId}
-                onDragEndMemo={() => {
-                  setDraggedMemoId(null);
-                  setDragOverCollectionKey(null);
+              <DndContext
+                sensors={collectionSensors}
+                collisionDetection={sidebarCollisionDetection}
+                measuring={{
+                  droppable: {
+                    strategy: MeasuringStrategy.Always,
+                  },
                 }}
-                onDragOverCollection={setDragOverCollectionKey}
-                onArchiveBlock={onArchiveBlock}
-                onRestoreBlock={onRestoreBlock}
-                onRequestDelete={setMemoPendingDelete}
-                onAddMemo={() =>
-                  handleAddMemoToGroup(null, UNFILED_COLLECTION_KEY)
-                }
-                draggedMemoId={draggedMemoId}
-              />
-
-              {sortedCollections.map((collection) => (
+                onDragStart={handleSidebarDragStart}
+                onDragOver={handleSidebarDragOver}
+                onDragEnd={handleSidebarDragEnd}
+                onDragCancel={handleSidebarDragCancel}
+              >
                 <CollectionGroup
-                  key={collection.id}
-                  title={collection.title}
-                  collectionKey={collection.id}
-                  collectionId={collection.id}
-                  blocks={activeBlocks.filter(
-                    (block) => block.collectionId === collection.id,
-                  )}
+                  title={UNFILED_LABEL}
+                  collectionKey={UNFILED_COLLECTION_KEY}
+                  blocks={unfiledBlocks}
                   selectedBlockId={selectedBlockId}
-                  collapsed={collapsedCollectionKeys.has(collection.id)}
-                  isDragTarget={dragOverCollectionKey === collection.id}
+                  collapsed={collapsedCollectionKeys.has(
+                    UNFILED_COLLECTION_KEY,
+                  )}
+                  isDragTarget={
+                    dragOverCollectionKey === UNFILED_COLLECTION_KEY
+                  }
                   onSelectBlock={onSelectBlock}
                   onToggleCollapse={toggleCollection}
-                  onDropMemo={moveMemoToCollection}
-                  onDragStartMemo={setDraggedMemoId}
-                  onDragEndMemo={() => {
-                    setDraggedMemoId(null);
-                    setDragOverCollectionKey(null);
-                  }}
-                  onDragOverCollection={setDragOverCollectionKey}
                   onArchiveBlock={onArchiveBlock}
                   onRestoreBlock={onRestoreBlock}
                   onRequestDelete={setMemoPendingDelete}
-                  onUpdateCollectionTitle={onUpdateCollectionTitle}
                   onAddMemo={() =>
-                    handleAddMemoToGroup(collection.id, collection.id)
+                    handleAddMemoToGroup(null, UNFILED_COLLECTION_KEY)
                   }
-                  onDeleteCollection={onDeleteCollection}
                   draggedMemoId={draggedMemoId}
+                  dragHandle={<DragHandleGutter />}
                 />
-              ))}
-              <CollectionGroup
-                title={ARCHIVE_LABEL}
-                collectionKey={ARCHIVE_COLLECTION_KEY}
-                blocks={archivedBlocks}
-                selectedBlockId={selectedBlockId}
-                collapsed={collapsedCollectionKeys.has(ARCHIVE_COLLECTION_KEY)}
-                isDragTarget={dragOverCollectionKey === ARCHIVE_COLLECTION_KEY}
-                onSelectBlock={onSelectBlock}
-                onToggleCollapse={toggleCollection}
-                onDropMemo={moveMemoToCollection}
-                onDragStartMemo={setDraggedMemoId}
-                onDragEndMemo={() => {
-                  setDraggedMemoId(null);
-                  setDragOverCollectionKey(null);
-                }}
-                onDragOverCollection={setDragOverCollectionKey}
-                onArchiveBlock={onArchiveBlock}
-                onRestoreBlock={onRestoreBlock}
-                onRequestDelete={setMemoPendingDelete}
-                draggedMemoId={draggedMemoId}
-                archived
-              />
+
+                <SortableContext
+                  items={sortedCollections.map((collection) =>
+                    collectionSortId(collection.id),
+                  )}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="flex flex-col gap-3">
+                    {sortedCollections.map((collection) => (
+                      <SortableCollectionGroup
+                        key={collection.id}
+                        collection={collection}
+                        blocks={activeBlocks.filter(
+                          (block) => block.collectionId === collection.id,
+                        )}
+                        selectedBlockId={selectedBlockId}
+                        collapsed={collapsedCollectionKeys.has(collection.id)}
+                        isDragTarget={dragOverCollectionKey === collection.id}
+                        onSelectBlock={onSelectBlock}
+                        onToggleCollapse={toggleCollection}
+                        onArchiveBlock={onArchiveBlock}
+                        onRestoreBlock={onRestoreBlock}
+                        onRequestDelete={setMemoPendingDelete}
+                        onUpdateCollectionTitle={onUpdateCollectionTitle}
+                        onAddMemo={() =>
+                          handleAddMemoToGroup(collection.id, collection.id)
+                        }
+                        onDeleteCollection={onDeleteCollection}
+                        draggedMemoId={draggedMemoId}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+                <CollectionGroup
+                  title={ARCHIVE_LABEL}
+                  collectionKey={ARCHIVE_COLLECTION_KEY}
+                  blocks={archivedBlocks}
+                  selectedBlockId={selectedBlockId}
+                  collapsed={collapsedCollectionKeys.has(ARCHIVE_COLLECTION_KEY)}
+                  isDragTarget={dragOverCollectionKey === ARCHIVE_COLLECTION_KEY}
+                  onSelectBlock={onSelectBlock}
+                  onToggleCollapse={toggleCollection}
+                  onArchiveBlock={onArchiveBlock}
+                  onRestoreBlock={onRestoreBlock}
+                  onRequestDelete={setMemoPendingDelete}
+                  draggedMemoId={draggedMemoId}
+                  dragHandle={<DragHandleGutter />}
+                  archived
+                />
+              </DndContext>
             </nav>
           </>
         )}
@@ -438,14 +681,6 @@ interface CollectionGroupProps {
   isDragTarget: boolean;
   onSelectBlock: (blockId: string | null) => void;
   onToggleCollapse: (collectionKey: string) => void;
-  onDropMemo: (
-    blockId: string,
-    collectionKey: string,
-    collectionId?: string,
-  ) => void;
-  onDragStartMemo: (blockId: string) => void;
-  onDragEndMemo: () => void;
-  onDragOverCollection: (collectionKey: string | null) => void;
   onArchiveBlock: (blockId: string) => void;
   onRestoreBlock: (blockId: string) => void;
   onRequestDelete: (block: TextBlock) => void;
@@ -454,6 +689,8 @@ interface CollectionGroupProps {
   onAddMemo?: () => void;
   onDeleteCollection?: (collectionId: string) => void;
   archived?: boolean;
+  dragHandle?: ReactNode;
+  isCollectionDragging?: boolean;
 }
 
 function CollectionGroup({
@@ -466,10 +703,6 @@ function CollectionGroup({
   isDragTarget,
   onSelectBlock,
   onToggleCollapse,
-  onDropMemo,
-  onDragStartMemo,
-  onDragEndMemo,
-  onDragOverCollection,
   onArchiveBlock,
   onRestoreBlock,
   onRequestDelete,
@@ -478,6 +711,8 @@ function CollectionGroup({
   onAddMemo,
   onDeleteCollection,
   archived = false,
+  dragHandle,
+  isCollectionDragging = false,
 }: CollectionGroupProps) {
   const [editing, setEditing] = useState(false);
   const [titleText, setTitleText] = useState(title);
@@ -496,32 +731,25 @@ function CollectionGroup({
     setEditing(false);
   };
 
-  const handleDrop = (event: React.DragEvent<HTMLElement>) => {
-    event.preventDefault();
-    const blockId = event.dataTransfer.getData("text/plain") || draggedMemoId;
-    if (blockId) onDropMemo(blockId, collectionKey, collectionId);
-    onDragOverCollection(null);
-  };
+  const { setNodeRef: setDropNodeRef } = useDroppable({
+    id: collectionDropId(collectionKey),
+    data: {
+      type: "memoCollectionDropZone",
+      collectionKey,
+      collectionId: collectionId ?? null,
+      archived,
+    } satisfies SidebarDragData,
+  });
 
   return (
     <section
-      onDragOver={(event) => {
-        if (!draggedMemoId) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
-        onDragOverCollection(collectionKey);
-      }}
-      onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          onDragOverCollection(null);
-        }
-      }}
-      onDrop={handleDrop}
+      ref={setDropNodeRef}
       className={`rounded-md transition-colors ${
         isDragTarget ? "bg-primary/10 ring-1 ring-primary/30" : ""
-      }`}
+      } ${isCollectionDragging ? "bg-secondary/80 shadow-sm" : ""}`}
     >
       <div className="group flex items-center justify-between gap-1 px-2 pb-1">
+        {dragHandle}
         {editing ? (
           <input
             value={titleText}
@@ -609,70 +837,261 @@ function CollectionGroup({
 
       {!collapsed && (
         <div className="ml-4 flex flex-col gap-1">
-          {blocks.map((block) => (
-            <div
-              key={block.id}
-              draggable
-              onDragStart={(event) => {
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("text/plain", block.id);
-                onDragStartMemo(block.id);
-              }}
-              onDragEnd={onDragEndMemo}
-              className={`group/memo flex cursor-grab items-center gap-1 rounded-md transition-colors active:cursor-grabbing ${
-                block.id === selectedBlockId
-                  ? "bg-primary/10"
-                  : "hover:bg-secondary"
-              } ${draggedMemoId === block.id ? "opacity-50" : ""}`}
-            >
-              <button
-                type="button"
-                onClick={() => onSelectBlock(block.id)}
-                className={`min-w-0 flex-1 truncate px-3 py-2 text-left text-sm ${
-                  block.id === selectedBlockId
-                    ? "text-foreground font-semibold"
-                    : "text-muted-foreground group-hover/memo:text-foreground"
-                }`}
-              >
-                {block.title}
-              </button>
-              {archived ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => onRestoreBlock(block.id)}
-                    className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-foreground"
-                    aria-label={`Restore ${block.title}`}
-                    title="Restore"
-                  >
-                    <Undo2 className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onRequestDelete(block)}
-                    className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    aria-label={`Delete ${block.title}`}
-                    title="Delete permanently"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </>
+          <SortableContext
+            items={archived ? [] : blocks.map((block) => memoSortId(block.id))}
+            strategy={verticalListSortingStrategy}
+          >
+            {blocks.map((block) =>
+              archived ? (
+                <MemoRow
+                  key={block.id}
+                  block={block}
+                  selectedBlockId={selectedBlockId}
+                  draggedMemoId={draggedMemoId}
+                  onSelectBlock={onSelectBlock}
+                  onArchiveBlock={onArchiveBlock}
+                  onRestoreBlock={onRestoreBlock}
+                  onRequestDelete={onRequestDelete}
+                  archived
+                />
               ) : (
-                <button
-                  type="button"
-                  onClick={() => onArchiveBlock(block.id)}
-                  className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-primary/10 hover:text-foreground group-hover/memo:opacity-100"
-                  aria-label={`Delete ${block.title}`}
-                  title="Delete"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          ))}
+                <SortableMemoRow
+                  key={block.id}
+                  block={block}
+                  collectionKey={collectionKey}
+                  collectionId={collectionId ?? null}
+                  selectedBlockId={selectedBlockId}
+                  draggedMemoId={draggedMemoId}
+                  onSelectBlock={onSelectBlock}
+                  onArchiveBlock={onArchiveBlock}
+                  onRestoreBlock={onRestoreBlock}
+                  onRequestDelete={onRequestDelete}
+                />
+              ),
+            )}
+          </SortableContext>
         </div>
       )}
     </section>
+  );
+}
+
+function DragHandleGutter() {
+  return <span className="h-6 w-5 flex-shrink-0" aria-hidden="true" />;
+}
+
+interface MemoRowProps {
+  block: TextBlock;
+  selectedBlockId: string | null;
+  draggedMemoId: string | null;
+  onSelectBlock: (blockId: string | null) => void;
+  onArchiveBlock: (blockId: string) => void;
+  onRestoreBlock: (blockId: string) => void;
+  onRequestDelete: (block: TextBlock) => void;
+  archived?: boolean;
+  dragHandle?: ReactNode;
+  style?: React.CSSProperties;
+  rowRef?: (node: HTMLDivElement | null) => void;
+}
+
+function MemoRow({
+  block,
+  selectedBlockId,
+  draggedMemoId,
+  onSelectBlock,
+  onArchiveBlock,
+  onRestoreBlock,
+  onRequestDelete,
+  archived = false,
+  dragHandle,
+  style,
+  rowRef,
+}: MemoRowProps) {
+  return (
+    <div
+      ref={rowRef}
+      style={style}
+      className={`group/memo flex items-center gap-1 rounded-md transition-colors ${
+        block.id === selectedBlockId ? "bg-primary/10" : "hover:bg-secondary"
+      } ${draggedMemoId === block.id ? "opacity-50" : ""}`}
+    >
+      {dragHandle ?? <DragHandleGutter />}
+      <button
+        type="button"
+        onClick={() => onSelectBlock(block.id)}
+        className={`min-w-0 flex-1 truncate px-2 py-2 text-left text-sm ${
+          block.id === selectedBlockId
+            ? "text-foreground font-semibold"
+            : "text-muted-foreground group-hover/memo:text-foreground"
+        }`}
+      >
+        {block.title}
+      </button>
+      {archived ? (
+        <>
+          <button
+            type="button"
+            onClick={() => onRestoreBlock(block.id)}
+            className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-foreground"
+            aria-label={`Restore ${block.title}`}
+            title="Restore"
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onRequestDelete(block)}
+            className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            aria-label={`Delete ${block.title}`}
+            title="Delete permanently"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onArchiveBlock(block.id)}
+          className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-primary/10 hover:text-foreground group-hover/memo:opacity-100"
+          aria-label={`Delete ${block.title}`}
+          title="Delete"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+interface SortableMemoRowProps {
+  block: TextBlock;
+  collectionKey: string;
+  collectionId: string | null;
+  selectedBlockId: string | null;
+  draggedMemoId: string | null;
+  onSelectBlock: (blockId: string | null) => void;
+  onArchiveBlock: (blockId: string) => void;
+  onRestoreBlock: (blockId: string) => void;
+  onRequestDelete: (block: TextBlock) => void;
+}
+
+function SortableMemoRow({
+  block,
+  collectionKey,
+  collectionId,
+  ...props
+}: SortableMemoRowProps) {
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: memoSortId(block.id),
+    data: {
+      type: "memo",
+      blockId: block.id,
+      collectionKey,
+      collectionId,
+    } satisfies SidebarDragData,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 20 : "auto",
+  };
+
+  return (
+    <MemoRow
+      {...props}
+      block={block}
+      rowRef={setNodeRef}
+      style={style}
+      dragHandle={
+        <button
+          ref={setActivatorNodeRef}
+          type="button"
+          className="flex h-7 w-5 flex-shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground opacity-50 transition-colors hover:bg-primary/10 hover:text-foreground active:cursor-grabbing group-hover/memo:opacity-100"
+          aria-label={`Move note ${block.title}`}
+          title="Drag to move note"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+      }
+    />
+  );
+}
+
+interface SortableCollectionGroupProps {
+  collection: MemoCollection;
+  blocks: TextBlock[];
+  selectedBlockId: string | null;
+  collapsed: boolean;
+  isDragTarget: boolean;
+  onSelectBlock: (blockId: string | null) => void;
+  onToggleCollapse: (collectionKey: string) => void;
+  onArchiveBlock: (blockId: string) => void;
+  onRestoreBlock: (blockId: string) => void;
+  onRequestDelete: (block: TextBlock) => void;
+  onUpdateCollectionTitle: (collectionId: string, title: string) => void;
+  onAddMemo: () => void;
+  onDeleteCollection: (collectionId: string) => void;
+  draggedMemoId: string | null;
+}
+
+function SortableCollectionGroup({
+  collection,
+  ...props
+}: SortableCollectionGroupProps) {
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: collectionSortId(collection.id),
+    data: {
+      type: "memoCollection",
+      collectionId: collection.id,
+    } satisfies SidebarDragData,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 20 : "auto",
+  };
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <CollectionGroup
+        {...props}
+        title={collection.title}
+        collectionKey={collection.id}
+        collectionId={collection.id}
+        isCollectionDragging={isDragging}
+        dragHandle={
+          <button
+            ref={setActivatorNodeRef}
+            type="button"
+            className="mt-0.5 flex h-6 w-5 flex-shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground opacity-60 transition-colors hover:bg-primary/10 hover:text-foreground active:cursor-grabbing group-hover:opacity-100"
+            aria-label={`Move ${collection.title}`}
+            title="Drag to reorder folder"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className="h-3.5 w-3.5" />
+          </button>
+        }
+      />
+    </div>
   );
 }
 

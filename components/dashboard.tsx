@@ -131,12 +131,14 @@ export function Dashboard() {
     updateTextBlockTitle,
     updateTextBlockContent,
     updateTextBlockCollection,
+    reorderTextBlocks,
     archiveTextBlock,
     restoreTextBlock,
     deleteTextBlock,
     addMemoCollection,
     updateMemoCollectionTitle,
     deleteMemoCollection,
+    reorderMemoCollections,
     addSketch,
     updateSketchTitle,
     updateSketchElements,
@@ -664,6 +666,8 @@ export function Dashboard() {
             onAddCollection={addMemoCollection}
             onUpdateCollectionTitle={updateMemoCollectionTitle}
             onDeleteCollection={deleteMemoCollection}
+            onReorderCollections={reorderMemoCollections}
+            onReorderBlocks={reorderTextBlocks}
           />
         ) : activeView === "sketches" ? (
           <SketchpadPage

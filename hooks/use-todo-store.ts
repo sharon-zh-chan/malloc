@@ -26,6 +26,8 @@ import type { User, RealtimeChannel } from "@supabase/supabase-js";
 const STORAGE_KEY = "todo-at-one-glance";
 const MUTATION_QUEUE_KEY = "todo-at-one-glance-pending-mutations";
 const FAILED_MUTATION_QUEUE_KEY = "todo-at-one-glance-failed-mutations";
+const MEMO_COLLECTION_ORDER_MIGRATION_KEY =
+  "todo-at-one-glance-memo-collection-order-migrated";
 const ANALYTICS_HEARTBEAT_MS = 30_000;
 const FAILED_MUTATION_QUEUE_LIMIT = 20;
 
@@ -44,11 +46,13 @@ type AnalyticsEventName =
   | "archived_tasks_cleared"
   | "memo_created"
   | "memo_moved"
+  | "memos_reordered"
   | "memo_archived"
   | "memo_restored"
   | "memo_deleted"
   | "memo_collection_created"
   | "memo_collection_deleted"
+  | "memo_collections_reordered"
   | "sketch_created"
   | "sketch_archived"
   | "sketch_restored"
@@ -195,7 +199,13 @@ function migrateAppState(raw: Partial<AppState>): AppState {
         }))
       : [],
     memoCollections: Array.isArray(raw.memoCollections)
-      ? raw.memoCollections
+      ? raw.memoCollections.map((collection, index) => ({
+          ...collection,
+          order:
+            typeof collection.order === "number" && Number.isFinite(collection.order)
+              ? collection.order
+              : index,
+        }))
       : [],
     sketches: Array.isArray(raw.sketches)
       ? raw.sketches.map((sketch) => ({
@@ -249,7 +259,22 @@ function loadLocalState() {
       return createDefaultState();
     }
 
-    return migrateAppState(JSON.parse(raw) as Partial<AppState>);
+    const parsed = JSON.parse(raw) as Partial<AppState>;
+    if (
+      !localStorage.getItem(MEMO_COLLECTION_ORDER_MIGRATION_KEY) &&
+      Array.isArray(parsed.memoCollections)
+    ) {
+      parsed.memoCollections = [...parsed.memoCollections]
+        .sort((a, b) =>
+          String(a.title ?? "").localeCompare(String(b.title ?? ""), undefined, {
+            sensitivity: "base",
+          }),
+        )
+        .map((collection, order) => ({ ...collection, order }));
+      localStorage.setItem(MEMO_COLLECTION_ORDER_MIGRATION_KEY, "true");
+    }
+
+    return migrateAppState(parsed);
   } catch {
     return createDefaultState();
   }
@@ -438,8 +463,12 @@ function mutationQueueKey(mutation: WorkspaceMutation): string | null {
     case "editMemo":
     case "moveMemo":
       return `${mutation.action}:${mutation.payload.memoId}`;
+    case "reorderMemos":
+      return mutation.action;
     case "renameMemoCollection":
       return `${mutation.action}:${mutation.payload.collectionId}`;
+    case "reorderMemoCollections":
+      return mutation.action;
     case "renameSketch":
     case "editSketch":
     case "moveSketch":
@@ -646,6 +675,7 @@ export function useTodoStore() {
     queueRef.current = [];
     ownMutationIdsRef.current.clear();
     saveMutationQueue([]);
+    localStorage.removeItem(MEMO_COLLECTION_ORDER_MIGRATION_KEY);
 
     const nextState = createDefaultState();
     setState(nextState);
@@ -1546,6 +1576,35 @@ export function useTodoStore() {
     [applyLocalMutation, trackProductEvent],
   );
 
+  const reorderTextBlocks = useCallback(
+    (blocks: TextBlock[]) => {
+      const updatedAt = Date.now();
+      const reordered = blocks.map((memo, order) => ({
+        ...memo,
+        order,
+        updatedAt: memo.archivedAt ? memo.updatedAt : updatedAt,
+      }));
+
+      applyLocalMutation(
+        (prev) => ({ ...prev, textBlocks: reordered }),
+        {
+          action: "reorderMemos",
+          payload: {
+            memos: reordered.map((memo) => ({
+              memoId: memo.id,
+              collectionId: memo.collectionId,
+            })),
+            updatedAt,
+          },
+        },
+      );
+      void trackProductEvent("memos_reordered", {
+        memos_count: reordered.filter((memo) => !memo.archivedAt).length,
+      });
+    },
+    [applyLocalMutation, trackProductEvent],
+  );
+
   const archiveTextBlock = useCallback(
     (memoId: string) => {
       const archivedAt = Date.now();
@@ -1634,12 +1693,18 @@ export function useTodoStore() {
         title: trimmed,
         createdAt: now,
         updatedAt: now,
-        order: state.memoCollections.length,
+        order: 0,
       };
       applyLocalMutation(
         (prev) => ({
           ...prev,
-          memoCollections: [...prev.memoCollections, collection],
+          memoCollections: [
+            collection,
+            ...prev.memoCollections.map((existingCollection) => ({
+              ...existingCollection,
+              order: existingCollection.order + 1,
+            })),
+          ],
         }),
         { action: "addMemoCollection", payload: { collection } },
       );
@@ -1710,6 +1775,32 @@ export function useTodoStore() {
       });
     },
     [applyLocalMutation, state.memoCollections.length, trackProductEvent],
+  );
+
+  const reorderMemoCollections = useCallback(
+    (collections: MemoCollection[]) => {
+      const updatedAt = Date.now();
+      const reordered = collections.map((collection, order) => ({
+        ...collection,
+        order,
+        updatedAt,
+      }));
+
+      applyLocalMutation(
+        (prev) => ({ ...prev, memoCollections: reordered }),
+        {
+          action: "reorderMemoCollections",
+          payload: {
+            collectionIds: reordered.map((collection) => collection.id),
+            updatedAt,
+          },
+        },
+      );
+      void trackProductEvent("memo_collections_reordered", {
+        memo_collections_count: reordered.length,
+      });
+    },
+    [applyLocalMutation, trackProductEvent],
   );
 
   const addSketch = useCallback(
@@ -2237,12 +2328,14 @@ export function useTodoStore() {
     updateTextBlockTitle,
     updateTextBlockContent,
     updateTextBlockCollection,
+    reorderTextBlocks,
     archiveTextBlock,
     restoreTextBlock,
     deleteTextBlock,
     addMemoCollection,
     updateMemoCollectionTitle,
     deleteMemoCollection,
+    reorderMemoCollections,
     addSketch,
     updateSketchTitle,
     updateSketchElements,

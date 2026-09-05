@@ -32,6 +32,11 @@ const memoSchema = z.object({
   order: z.number().int(),
 });
 
+const memoOrderSchema = z.object({
+  memoId: id,
+  collectionId: id.nullable(),
+});
+
 const memoCollectionSchema = z.object({
   id,
   title: z.string(),
@@ -154,12 +159,14 @@ export const workspaceMutationActionSchema = z.enum([
   "renameMemo",
   "editMemo",
   "moveMemo",
+  "reorderMemos",
   "archiveMemo",
   "restoreMemo",
   "deleteMemo",
   "addMemoCollection",
   "renameMemoCollection",
   "deleteMemoCollection",
+  "reorderMemoCollections",
   "addSketch",
   "renameSketch",
   "editSketch",
@@ -276,6 +283,13 @@ export const workspaceMutationSchema = z.discriminatedUnion("action", [
     }),
   }),
   z.object({
+    action: z.literal("reorderMemos"),
+    payload: z.object({
+      memos: z.array(memoOrderSchema),
+      updatedAt: timestamp,
+    }),
+  }),
+  z.object({
     action: z.literal("archiveMemo"),
     payload: z.object({ memoId: id, archivedAt: timestamp, updatedAt: timestamp }),
   }),
@@ -302,6 +316,13 @@ export const workspaceMutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("deleteMemoCollection"),
     payload: z.object({ collectionId: id }),
+  }),
+  z.object({
+    action: z.literal("reorderMemoCollections"),
+    payload: z.object({
+      collectionIds: z.array(id),
+      updatedAt: timestamp,
+    }),
   }),
   z.object({
     action: z.literal("addSketch"),
