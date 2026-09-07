@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CalendarPlus, Edit3, Plus, Trash2, X } from "lucide-react";
 import type { CalendarEvent, CalendarRecurrenceFrequency } from "@/lib/types";
 
@@ -24,6 +24,7 @@ export function createDefaultEventDraft(date: string): EventDraft {
   return {
     title: "",
     date,
+    endDate: null,
     startTime: null,
     endTime: null,
     categoryId: null,
@@ -43,6 +44,7 @@ function draftFromEvent(event: CalendarEvent): EventDraft {
   return {
     title: event.title,
     date: event.date,
+    endDate: event.endDate ?? null,
     startTime: event.startTime,
     endTime: event.endTime,
     categoryId: event.categoryId,
@@ -78,6 +80,11 @@ export function CalendarEventPopover({
   const [draft, setDraft] = useState<EventDraft>(() =>
     createDefaultEventDraft(date),
   );
+  const startDateInputRef = useRef<HTMLInputElement>(null);
+  const endDateInputRef = useRef<HTMLInputElement>(null);
+  const startTimeInputRef = useRef<HTMLInputElement>(null);
+  const endTimeInputRef = useRef<HTMLInputElement>(null);
+  const untilDateInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -98,16 +105,34 @@ export function CalendarEventPopover({
   const isEditing = Boolean(event);
 
   const submitEvent = () => {
-    if (!draft.title.trim() || !draft.date) return;
+    const startDate = startDateInputRef.current?.value || draft.date;
+    const rawEndDate = endDateInputRef.current?.value || null;
+    const rawStartTime = startTimeInputRef.current?.value || null;
+    const rawEndTime = endTimeInputRef.current?.value || null;
+    const rawUntilDate = untilDateInputRef.current?.value || null;
+
+    if (!draft.title.trim() || !startDate) return;
+    const normalizedDraft = {
+      ...draft,
+      date: startDate,
+      endDate: rawEndDate && rawEndDate > startDate ? rawEndDate : null,
+      startTime: rawStartTime,
+      endTime: rawEndTime,
+      recurrence: {
+        ...draft.recurrence,
+        untilDate:
+          draft.recurrence.frequency === "none" ? null : rawUntilDate,
+      },
+    };
 
     if (event) {
       onUpdateEvent({
         ...event,
-        ...draft,
-        deletedOccurrenceDates: draft.deletedOccurrenceDates,
+        ...normalizedDraft,
+        deletedOccurrenceDates: normalizedDraft.deletedOccurrenceDates,
       });
     } else {
-      const eventId = onAddEvent(draft);
+      const eventId = onAddEvent(normalizedDraft);
       if (!eventId) return;
     }
 
@@ -121,14 +146,15 @@ export function CalendarEventPopover({
       onClick={onClose}
     >
       <section
-        className={`sketchy-card pointer-events-auto fixed max-h-[calc(100vh-2rem)] w-[min(92vw,460px)] overflow-auto p-4 shadow-[0_18px_50px_hsl(var(--foreground)/0.22)] ${
-          position ? "" : "left-1/2 top-24 -translate-x-1/2"
+        className={`sketchy-card pointer-events-auto fixed w-[min(92vw,460px)] overflow-auto p-4 shadow-[0_18px_50px_hsl(var(--foreground)/0.22)] ${
+          position ? "" : "left-1/2 top-4 max-h-[calc(100vh-2rem)] -translate-x-1/2"
         }`}
         style={
           position
             ? {
                 left: position.left,
                 top: position.top,
+                maxHeight: `calc(100vh - ${position.top + 16}px)`,
               }
             : undefined
         }
@@ -176,14 +202,36 @@ export function CalendarEventPopover({
           </label>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <label className="block">
-              <span className="brand-label">Date</span>
+              <span className="brand-label">Starts date</span>
               <input
+                ref={startDateInputRef}
                 type="date"
                 value={draft.date}
                 onChange={(inputEvent) =>
                   setDraft((current) => ({
                     ...current,
                     date: inputEvent.target.value,
+                    endDate:
+                      current.endDate &&
+                      current.endDate < inputEvent.target.value
+                        ? inputEvent.target.value
+                        : current.endDate,
+                  }))
+                }
+                className="mt-1 w-full border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground"
+              />
+            </label>
+            <label className="block">
+              <span className="brand-label">Ends date</span>
+              <input
+                ref={endDateInputRef}
+                type="date"
+                value={draft.endDate ?? ""}
+                min={draft.date}
+                onChange={(inputEvent) =>
+                  setDraft((current) => ({
+                    ...current,
+                    endDate: inputEvent.target.value || null,
                   }))
                 }
                 className="mt-1 w-full border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground"
@@ -192,8 +240,9 @@ export function CalendarEventPopover({
           </div>
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
-              <span className="brand-label">Starts</span>
+              <span className="brand-label">Start time</span>
               <input
+                ref={startTimeInputRef}
                 type="time"
                 value={draft.startTime ?? ""}
                 onChange={(inputEvent) =>
@@ -206,8 +255,9 @@ export function CalendarEventPopover({
               />
             </label>
             <label className="block">
-              <span className="brand-label">Ends</span>
+              <span className="brand-label">End time</span>
               <input
+                ref={endTimeInputRef}
                 type="time"
                 value={draft.endTime ?? ""}
                 onChange={(inputEvent) =>
@@ -267,6 +317,7 @@ export function CalendarEventPopover({
           <label className="block">
             <span className="brand-label">Until</span>
             <input
+              ref={untilDateInputRef}
               type="date"
               value={draft.recurrence.untilDate ?? ""}
               disabled={draft.recurrence.frequency === "none"}

@@ -126,6 +126,7 @@ export interface CalendarEvent {
   id: string;
   title: string;
   date: string;
+  endDate?: string | null;
   startTime: string | null;
   endTime: string | null;
   categoryId: string | null;

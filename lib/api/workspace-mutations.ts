@@ -117,6 +117,7 @@ const calendarEventSchema = z.object({
   id,
   title: z.string(),
   date: z.string(),
+  endDate: z.string().nullable().optional(),
   startTime: z.string().nullable(),
   endTime: z.string().nullable(),
   categoryId: id.nullable(),

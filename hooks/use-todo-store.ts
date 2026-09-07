@@ -222,6 +222,8 @@ function migrateAppState(raw: Partial<AppState>): AppState {
     calendarEvents: Array.isArray(raw.calendarEvents)
       ? raw.calendarEvents.map((event) => ({
           ...event,
+          endDate:
+            event.endDate && event.endDate > event.date ? event.endDate : null,
           startTime: event.startTime ?? null,
           endTime: event.endTime ?? null,
           categoryId: event.categoryId ?? null,
@@ -2073,6 +2075,10 @@ export function useTodoStore() {
         ...eventInput,
         id: generateId(),
         title: trimmed,
+        endDate:
+          eventInput.endDate && eventInput.endDate > eventInput.date
+            ? eventInput.endDate
+            : null,
         description: eventInput.description.trim(),
         location: eventInput.location?.trim() || null,
         recurrence: {
@@ -2108,6 +2114,7 @@ export function useTodoStore() {
       const nextEvent: CalendarEvent = {
         ...event,
         title: event.title.trim(),
+        endDate: event.endDate && event.endDate > event.date ? event.endDate : null,
         description: event.description.trim(),
         location: event.location?.trim() || null,
         recurrence: {

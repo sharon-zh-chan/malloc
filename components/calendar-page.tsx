@@ -39,6 +39,20 @@ type CalendarOccurrence = {
   isRecurringFollowUp: boolean;
 };
 
+type CalendarSpanSegment = {
+  id: string;
+  event: CalendarEvent;
+  startDate: string;
+  endDate: string;
+  weekIndex: number;
+  startColumn: number;
+  endColumn: number;
+  lane: number;
+  isRecurringFollowUp: boolean;
+  continuesBefore: boolean;
+  continuesAfter: boolean;
+};
+
 type PendingDelete = {
   event: CalendarEvent;
   date: string;
@@ -112,12 +126,39 @@ function longDayLabel(dateId: string) {
 
 function formatEventTime(event: CalendarEvent) {
   if (!event.startTime && !event.endTime) return "Any time";
+  if (getEventEndDate(event) !== event.date) {
+    if (event.startTime && event.endTime) {
+      return `Starts ${event.startTime}, ends ${event.endTime}`;
+    }
+    if (event.startTime) return `Starts ${event.startTime}`;
+    if (event.endTime) return `Ends ${event.endTime}`;
+  }
   if (event.startTime && event.endTime) return `${event.startTime}-${event.endTime}`;
   return event.startTime ?? event.endTime ?? "Any time";
 }
 
+function getEventEndDate(event: CalendarEvent) {
+  return event.endDate && compareDateIds(event.endDate, event.date) > 0
+    ? event.endDate
+    : event.date;
+}
+
+function formatEventDateRange(event: CalendarEvent, occurrenceDate: string) {
+  const endDate = getEventEndDate(event);
+  if (endDate === event.date) return dayLabel(occurrenceDate);
+  return `${dayLabel(event.date)} - ${dayLabel(endDate)}`;
+}
+
 function compareDateIds(a: string, b: string) {
   return a.localeCompare(b);
+}
+
+function maxDateId(a: string, b: string) {
+  return compareDateIds(a, b) >= 0 ? a : b;
+}
+
+function minDateId(a: string, b: string) {
+  return compareDateIds(a, b) <= 0 ? a : b;
 }
 
 function daysBetween(a: Date, b: Date) {
@@ -130,8 +171,7 @@ function monthsBetween(a: Date, b: Date) {
   return (b.getFullYear() - a.getFullYear()) * 12 + b.getMonth() - a.getMonth();
 }
 
-function occursOn(event: CalendarEvent, dateId: string) {
-  if (event.deletedOccurrenceDates.includes(dateId)) return false;
+function startsOn(event: CalendarEvent, dateId: string) {
   if (event.recurrence.untilDate && compareDateIds(dateId, event.recurrence.untilDate) > 0) {
     return false;
   }
@@ -159,6 +199,29 @@ function occursOn(event: CalendarEvent, dateId: string) {
         candidate.getDate() === eventDate.getDate()
       );
   }
+}
+
+function occursOn(event: CalendarEvent, dateId: string) {
+  if (event.deletedOccurrenceDates.includes(dateId)) return false;
+
+  const endDate = getEventEndDate(event);
+  const durationDays = daysBetween(parseDateId(event.date), parseDateId(endDate));
+
+  if (event.recurrence.frequency === "none") {
+    return compareDateIds(dateId, event.date) >= 0 && compareDateIds(dateId, endDate) <= 0;
+  }
+
+  const candidate = parseDateId(dateId);
+  for (let dayOffset = 0; dayOffset <= durationDays; dayOffset += 1) {
+    const possibleStart = formatDateId(addDays(candidate, -dayOffset));
+    if (startsOn(event, possibleStart)) return true;
+  }
+
+  return false;
+}
+
+function isMultiDayEvent(event: CalendarEvent) {
+  return getEventEndDate(event) !== event.date;
 }
 
 function getOccurrences(
@@ -196,6 +259,104 @@ function getOccurrences(
       b.event.startTime ?? "99:99",
     );
   });
+}
+
+function getMonthSpanLayout(
+  events: CalendarEvent[],
+  rangeStart: Date,
+  rangeEnd: Date,
+  scope: DateScope,
+) {
+  const gridStartId = formatDateId(rangeStart);
+  const gridEndId = formatDateId(rangeEnd);
+  const spans: Array<{
+    event: CalendarEvent;
+    startDate: string;
+    endDate: string;
+    isRecurringFollowUp: boolean;
+  }> = [];
+
+  for (const event of events) {
+    if (!isMultiDayEvent(event)) continue;
+
+    const durationDays = daysBetween(
+      parseDateId(event.date),
+      parseDateId(getEventEndDate(event)),
+    );
+    const searchStart = addDays(rangeStart, -durationDays);
+
+    for (
+      let cursor = new Date(searchStart);
+      cursor <= rangeEnd;
+      cursor = addDays(cursor, 1)
+    ) {
+      const startDate = formatDateId(cursor);
+      if (!startsOn(event, startDate)) continue;
+      if (event.deletedOccurrenceDates.includes(startDate)) continue;
+
+      const isRecurringFollowUp =
+        event.recurrence.frequency !== "none" && startDate !== event.date;
+      if (scope === "key" && isRecurringFollowUp) continue;
+
+      const endDate = formatDateId(addDays(cursor, durationDays));
+      if (compareDateIds(endDate, gridStartId) < 0) continue;
+      if (compareDateIds(startDate, gridEndId) > 0) continue;
+
+      spans.push({ event, startDate, endDate, isRecurringFollowUp });
+    }
+  }
+
+  const segments: CalendarSpanSegment[] = [];
+  const laneCounts = Array.from({ length: 6 }, () => 0);
+
+  for (let weekIndex = 0; weekIndex < 6; weekIndex += 1) {
+    const weekStart = addDays(rangeStart, weekIndex * 7);
+    const weekEnd = addDays(weekStart, 6);
+    const weekStartId = formatDateId(weekStart);
+    const weekEndId = formatDateId(weekEnd);
+    const laneEndColumns: number[] = [];
+
+    const weekSpans = spans
+      .filter(
+        (span) =>
+          compareDateIds(span.endDate, weekStartId) >= 0 &&
+          compareDateIds(span.startDate, weekEndId) <= 0,
+      )
+      .sort((a, b) => {
+        const startSort = a.startDate.localeCompare(b.startDate);
+        if (startSort !== 0) return startSort;
+        return a.endDate.localeCompare(b.endDate);
+      });
+
+    for (const span of weekSpans) {
+      const clippedStart = maxDateId(span.startDate, weekStartId);
+      const clippedEnd = minDateId(span.endDate, weekEndId);
+      const startColumn = daysBetween(weekStart, parseDateId(clippedStart));
+      const endColumn = daysBetween(weekStart, parseDateId(clippedEnd));
+      let lane = laneEndColumns.findIndex((endColumnForLane) => {
+        return endColumnForLane < startColumn;
+      });
+      if (lane === -1) lane = laneEndColumns.length;
+      laneEndColumns[lane] = endColumn;
+      laneCounts[weekIndex] = Math.max(laneCounts[weekIndex], lane + 1);
+
+      segments.push({
+        id: `${span.event.id}:${span.startDate}:${weekIndex}`,
+        event: span.event,
+        startDate: span.startDate,
+        endDate: span.endDate,
+        weekIndex,
+        startColumn,
+        endColumn,
+        lane,
+        isRecurringFollowUp: span.isRecurringFollowUp,
+        continuesBefore: compareDateIds(span.startDate, weekStartId) < 0,
+        continuesAfter: compareDateIds(span.endDate, weekEndId) > 0,
+      });
+    }
+  }
+
+  return { laneCounts, segments };
 }
 
 export function CalendarPage({
@@ -241,6 +402,10 @@ export function CalendarPage({
     }
     return grouped;
   }, [visibleOccurrences]);
+  const monthSpanLayout = useMemo(
+    () => getMonthSpanLayout(events, monthGridStart, monthGridEnd, dateScope),
+    [dateScope, events, monthGridEnd, monthGridStart],
+  );
 
   const selectedOccurrences = useMemo(
     () =>
@@ -434,66 +599,122 @@ export function CalendarPage({
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-7">
-              {Array.from({ length: 42 }).map((_, index) => {
-                const day = addDays(monthGridStart, index);
-                const date = formatDateId(day);
-                const occurrences = occurrencesByDate.get(date) ?? [];
-                const inMonth = day.getMonth() === anchorDate.getMonth();
+            <div>
+              {Array.from({ length: 6 }).map((_, weekIndex) => {
+                const weekLaneCount = monthSpanLayout.laneCounts[weekIndex] ?? 0;
+                const weekSegments = monthSpanLayout.segments.filter(
+                  (segment) => segment.weekIndex === weekIndex,
+                );
                 return (
                   <div
-                    key={date}
-                    className={`relative min-h-[112px] border-b border-r border-border p-2 transition-colors ${
-                      index % 7 === 6 ? "border-r-0" : ""
-                    } ${index >= 35 ? "border-b-0" : ""} ${
-                      selectedDate === date ? "bg-primary/10" : ""
-                    }`}
+                    key={weekIndex}
+                    className="relative grid grid-cols-7 border-b border-border last:border-b-0"
+                    style={{
+                      minHeight: Math.max(112, 72 + weekLaneCount * 24),
+                    }}
                   >
-                    <button
-                      type="button"
-                      onClick={(clickEvent) =>
-                        openNewEvent(date, clickEvent.currentTarget)
-                      }
-                      className="absolute inset-0 z-0 text-left transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                      aria-label={`Add event on ${longDayLabel(date)}`}
-                    />
-                    <div className="pointer-events-none relative z-10">
-                      <span
-                        className={`inline-flex h-6 min-w-6 items-center justify-center px-1 text-xs font-bold ${
-                          date === todayId
-                            ? "bg-primary text-primary-foreground"
-                            : inMonth
-                              ? "text-foreground"
-                              : "text-muted-foreground/50"
-                        }`}
-                      >
-                        {day.getDate()}
-                      </span>
-                      <div className="mt-2 flex flex-col gap-1">
-                        {occurrences.slice(0, 4).map((occurrence) => (
+                    {Array.from({ length: 7 }).map((__, dayIndex) => {
+                      const day = addDays(monthGridStart, weekIndex * 7 + dayIndex);
+                      const date = formatDateId(day);
+                      const occurrences = (occurrencesByDate.get(date) ?? []).filter(
+                        (occurrence) => !isMultiDayEvent(occurrence.event),
+                      );
+                      const inMonth = day.getMonth() === anchorDate.getMonth();
+                      return (
+                        <div
+                          key={date}
+                          className={`relative border-r border-border p-2 transition-colors last:border-r-0 ${
+                            selectedDate === date ? "bg-primary/10" : ""
+                          }`}
+                        >
                           <button
-                            key={occurrence.id}
                             type="button"
-                            onClick={() =>
-                              openEvent(occurrence.event, occurrence.date)
+                            onClick={(clickEvent) =>
+                              openNewEvent(date, clickEvent.currentTarget)
                             }
-                            className="pointer-events-auto flex min-w-0 items-center gap-1.5 text-left text-xs text-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            aria-label={`Open ${occurrence.event.title}`}
-                          >
+                            className="absolute inset-0 z-0 text-left transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                            aria-label={`Add event on ${longDayLabel(date)}`}
+                          />
+                          <div className="pointer-events-none relative z-10">
                             <span
-                              className="h-2 w-2 shrink-0 rounded-full"
-                              style={{ backgroundColor: occurrenceColor(occurrence) }}
-                            />
-                            <span className="truncate">{occurrence.event.title}</span>
+                              className={`inline-flex h-6 min-w-6 items-center justify-center px-1 text-xs font-bold ${
+                                date === todayId
+                                  ? "bg-primary text-primary-foreground"
+                                  : inMonth
+                                    ? "text-foreground"
+                                    : "text-muted-foreground/50"
+                              }`}
+                            >
+                              {day.getDate()}
+                            </span>
+                            <div
+                              className="mt-2 flex flex-col gap-1"
+                              style={{ paddingTop: weekLaneCount * 24 }}
+                            >
+                              {occurrences.slice(0, 4).map((occurrence) => (
+                                <button
+                                  key={occurrence.id}
+                                  type="button"
+                                  onClick={() =>
+                                    openEvent(occurrence.event, occurrence.date)
+                                  }
+                                  className="pointer-events-auto flex min-w-0 items-center gap-1.5 text-left text-xs text-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  aria-label={`Open ${occurrence.event.title}`}
+                                >
+                                  <span
+                                    className="h-2 w-2 shrink-0 rounded-full"
+                                    style={{
+                                      backgroundColor: occurrenceColor(occurrence),
+                                    }}
+                                  />
+                                  <span className="truncate">
+                                    {occurrence.event.title}
+                                  </span>
+                                </button>
+                              ))}
+                              {occurrences.length > 4 && (
+                                <span className="text-xs text-muted-foreground">
+                                  +{occurrences.length - 4}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {weekSegments.length > 0 && (
+                      <div className="pointer-events-none absolute left-0 right-0 top-10 grid grid-cols-7 gap-y-1 px-1">
+                        {weekSegments.map((segment) => (
+                          <button
+                            key={segment.id}
+                            type="button"
+                            onClick={() => openEvent(segment.event, segment.startDate)}
+                            className={`pointer-events-auto z-20 h-5 min-w-0 overflow-hidden bg-primary px-2 text-left text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                              segment.continuesBefore ? "rounded-l-none" : "rounded-l-sm"
+                            } ${
+                              segment.continuesAfter ? "rounded-r-none" : "rounded-r-sm"
+                            }`}
+                            style={{
+                              gridColumn: `${segment.startColumn + 1} / ${
+                                segment.endColumn + 2
+                              }`,
+                              gridRow: segment.lane + 1,
+                              backgroundColor: segment.isRecurringFollowUp
+                                ? RECURRING_GREY
+                                : MALLOC_BLUE,
+                            }}
+                            aria-label={`Open ${segment.event.title}`}
+                            title={`${segment.event.title} ${dayLabel(
+                              segment.startDate,
+                            )} - ${dayLabel(segment.endDate)}`}
+                          >
+                            <span className="block truncate">
+                              {segment.continuesBefore ? "" : segment.event.title}
+                            </span>
                           </button>
                         ))}
-                        {occurrences.length > 4 && (
-                          <span className="text-xs text-muted-foreground">
-                            +{occurrences.length - 4}
-                          </span>
-                        )}
                       </div>
-                    </div>
+                    )}
                   </div>
                 );
               })}
@@ -649,7 +870,7 @@ function EventRow({
           </span>
           <span className="flex items-center gap-1 text-xs text-muted-foreground">
             <CalendarDays className="h-3.5 w-3.5" />
-            {dayLabel(occurrence.date)}
+            {formatEventDateRange(occurrence.event, occurrence.date)}
           </span>
           <span className="flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="h-3.5 w-3.5" />
