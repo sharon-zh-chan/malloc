@@ -100,6 +100,16 @@ const sketchCollectionSchema = z.object({
   order: z.number().int(),
 });
 
+const journalEntrySchema = z.object({
+  id,
+  title: z.string(),
+  content: z.string(),
+  journalDate: z.string(),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+  order: z.number().int(),
+});
+
 const calendarRecurrenceSchema = z.object({
   frequency: z.enum(["none", "daily", "weekly", "monthly", "yearly"]),
   interval: z.number().int().positive(),
@@ -178,6 +188,10 @@ export const workspaceMutationActionSchema = z.enum([
   "addSketchCollection",
   "renameSketchCollection",
   "deleteSketchCollection",
+  "addJournalEntry",
+  "renameJournalEntry",
+  "editJournalEntry",
+  "deleteJournalEntry",
   "addCalendarEvent",
   "updateCalendarEvent",
   "deleteCalendarEvent",
@@ -380,6 +394,22 @@ export const workspaceMutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("deleteSketchCollection"),
     payload: z.object({ collectionId: id }),
+  }),
+  z.object({
+    action: z.literal("addJournalEntry"),
+    payload: z.object({ entry: journalEntrySchema }),
+  }),
+  z.object({
+    action: z.literal("renameJournalEntry"),
+    payload: z.object({ entryId: id, title: z.string(), updatedAt: timestamp }),
+  }),
+  z.object({
+    action: z.literal("editJournalEntry"),
+    payload: z.object({ entryId: id, content: z.string(), updatedAt: timestamp }),
+  }),
+  z.object({
+    action: z.literal("deleteJournalEntry"),
+    payload: z.object({ entryId: id }),
   }),
   z.object({
     action: z.literal("addCalendarEvent"),

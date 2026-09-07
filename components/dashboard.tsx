@@ -13,6 +13,7 @@ import { HistoryPage } from "./history-page";
 import { SketchpadPage } from "./sketchpad-page";
 import { CalendarPage } from "./calendar-page";
 import { CalendarEventPopover } from "./calendar-event-popover";
+import { JournalPage } from "./journal-page";
 import { CalendarPlus } from "lucide-react";
 import {
   DndContext,
@@ -149,6 +150,10 @@ export function Dashboard() {
     addSketchCollection,
     updateSketchCollectionTitle,
     deleteSketchCollection,
+    addJournalEntry,
+    updateJournalEntryTitle,
+    updateJournalEntryContent,
+    deleteJournalEntry,
     addCalendarEvent,
     updateCalendarEvent,
     deleteCalendarEvent,
@@ -158,11 +163,14 @@ export function Dashboard() {
   } = useTodoStore();
 
   const [activeView, setActiveView] = useState<
-    "stickies" | "memos" | "sketches" | "calendar" | "history"
+    "stickies" | "memos" | "journal" | "sketches" | "calendar" | "history"
   >("stickies");
   const [selectedTextBlockId, setSelectedTextBlockId] = useState<string | null>(
     null,
   );
+  const [selectedJournalEntryId, setSelectedJournalEntryId] = useState<
+    string | null
+  >(null);
   const [selectedSketchId, setSelectedSketchId] = useState<string | null>(null);
   const [calendarQuickAddOpen, setCalendarQuickAddOpen] = useState(false);
   const [logoutRedirecting, setLogoutRedirecting] = useState(false);
@@ -197,6 +205,15 @@ export function Dashboard() {
 
   useEffect(() => {
     if (
+      selectedJournalEntryId &&
+      !state.journalEntries.some((entry) => entry.id === selectedJournalEntryId)
+    ) {
+      setSelectedJournalEntryId(null);
+    }
+  }, [state.journalEntries, selectedJournalEntryId]);
+
+  useEffect(() => {
+    if (
       selectedSketchId &&
       !state.sketches.some((sketch) => sketch.id === selectedSketchId)
     ) {
@@ -221,6 +238,16 @@ export function Dashboard() {
         } else if (activeView === "memos") {
           const memoId = addTextBlock("Untitled Note");
           if (memoId) setSelectedTextBlockId(memoId);
+        } else if (activeView === "journal") {
+          const entryId = addJournalEntry(
+            getTodayDateId(),
+            new Date().toLocaleDateString(undefined, {
+              month: "long",
+              day: "numeric",
+              year: "numeric",
+            }),
+          );
+          if (entryId) setSelectedJournalEntryId(entryId);
         } else if (activeView === "sketches") {
           const sketchId = addSketch("Untitled sketch");
           if (sketchId) setSelectedSketchId(sketchId);
@@ -228,16 +255,21 @@ export function Dashboard() {
         return;
       }
 
-      if (event.altKey && !modifier && ["1", "2", "3", "4"].includes(event.key)) {
+      if (
+        event.altKey &&
+        !modifier &&
+        ["1", "2", "3", "4", "5"].includes(event.key)
+      ) {
         event.preventDefault();
         const nextView = (
           {
             "1": "stickies",
             "2": "memos",
-            "3": "sketches",
-            "4": "calendar",
+            "3": "journal",
+            "4": "sketches",
+            "5": "calendar",
           } as const
-        )[event.key as "1" | "2" | "3" | "4"];
+        )[event.key as "1" | "2" | "3" | "4" | "5"];
         setActiveView(nextView);
         void trackProductEvent("view_switched", { view: nextView });
       }
@@ -245,7 +277,14 @@ export function Dashboard() {
 
     window.addEventListener("keydown", handleWorkspaceShortcut);
     return () => window.removeEventListener("keydown", handleWorkspaceShortcut);
-  }, [activeView, addBlock, addSketch, addTextBlock, trackProductEvent]);
+  }, [
+    activeView,
+    addBlock,
+    addJournalEntry,
+    addSketch,
+    addTextBlock,
+    trackProductEvent,
+  ]);
 
   const moveBlock = (index: number, direction: "up" | "down") => {
     const newBlocks = [...state.blocks];
@@ -466,8 +505,8 @@ export function Dashboard() {
         </div>
       </header>
 
-      <section className="pb-5">
-        <div className="flex min-h-9 items-stretch justify-between border-b border-foreground bg-card px-4 md:px-8">
+      <section className="overflow-x-auto pb-5">
+        <div className="flex min-h-9 min-w-max items-stretch justify-between border-b border-foreground bg-card px-4 md:px-8">
           <div
             className="flex items-stretch"
             role="tablist"
@@ -510,8 +549,25 @@ export function Dashboard() {
             <button
               type="button"
               role="tab"
+              aria-selected={activeView === "journal"}
+              title="Journal (Alt+3)"
+              onClick={() => {
+                setActiveView("journal");
+                void trackProductEvent("view_switched", { view: "journal" });
+              }}
+              className={`border-r border-foreground px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
+                activeView === "journal"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-background hover:text-foreground"
+              }`}
+            >
+              Journal
+            </button>
+            <button
+              type="button"
+              role="tab"
               aria-selected={activeView === "sketches"}
-              title="Sketchpad (Alt+3)"
+              title="Sketchpad (Alt+4)"
               onClick={() => {
                 setActiveView("sketches");
                 void trackProductEvent("view_switched", { view: "sketches" });
@@ -528,7 +584,7 @@ export function Dashboard() {
               type="button"
               role="tab"
               aria-selected={activeView === "calendar"}
-              title="Calendar (Alt+4)"
+              title="Calendar (Alt+5)"
               onClick={() => {
                 setActiveView("calendar");
                 void trackProductEvent("view_switched", { view: "calendar" });
@@ -668,6 +724,16 @@ export function Dashboard() {
             onDeleteCollection={deleteMemoCollection}
             onReorderCollections={reorderMemoCollections}
             onReorderBlocks={reorderTextBlocks}
+          />
+        ) : activeView === "journal" ? (
+          <JournalPage
+            entries={state.journalEntries}
+            selectedEntryId={selectedJournalEntryId}
+            onSelectEntry={setSelectedJournalEntryId}
+            onAddEntry={addJournalEntry}
+            onUpdateTitle={updateJournalEntryTitle}
+            onUpdateContent={updateJournalEntryContent}
+            onDeleteEntry={deleteJournalEntry}
           />
         ) : activeView === "sketches" ? (
           <SketchpadPage

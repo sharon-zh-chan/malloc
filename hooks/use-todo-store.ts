@@ -5,6 +5,7 @@ import type {
   AppState,
   CalendarCategory,
   CalendarEvent,
+  JournalEntry,
   MemoCollection,
   Sketch,
   SketchCollection,
@@ -59,6 +60,8 @@ type AnalyticsEventName =
   | "sketch_deleted"
   | "sketch_collection_created"
   | "sketch_collection_deleted"
+  | "journal_entry_created"
+  | "journal_entry_deleted"
   | "calendar_event_created"
   | "calendar_event_deleted"
   | "calendar_category_created"
@@ -166,6 +169,7 @@ function createDefaultState(): AppState {
     memoCollections: [],
     sketches: [],
     sketchCollections: [],
+    journalEntries: [],
     calendarEvents: [],
     calendarCategories: [],
     lastUpdatedAt: 0,
@@ -218,6 +222,19 @@ function migrateAppState(raw: Partial<AppState>): AppState {
       : [],
     sketchCollections: Array.isArray(raw.sketchCollections)
       ? raw.sketchCollections
+      : [],
+    journalEntries: Array.isArray(raw.journalEntries)
+      ? raw.journalEntries.map((entry, index) => ({
+          ...entry,
+          journalDate:
+            typeof entry.journalDate === "string" && entry.journalDate
+              ? entry.journalDate
+              : new Date(entry.createdAt || Date.now()).toISOString().slice(0, 10),
+          order:
+            typeof entry.order === "number" && Number.isFinite(entry.order)
+              ? entry.order
+              : index,
+        }))
       : [],
     calendarEvents: Array.isArray(raw.calendarEvents)
       ? raw.calendarEvents.map((event) => ({
@@ -424,6 +441,13 @@ async function createInitialWorkspace(
     }
   }
 
+  for (const entry of state.journalEntries) {
+    response = await applyInitialWorkspaceMutation(supabase, {
+      action: "addJournalEntry",
+      payload: { entry },
+    });
+  }
+
   for (const category of state.calendarCategories) {
     response = await applyInitialWorkspaceMutation(supabase, {
       action: "addCalendarCategory",
@@ -479,6 +503,9 @@ function mutationQueueKey(mutation: WorkspaceMutation): string | null {
       return `${mutation.action}:${mutation.payload.sketchId}`;
     case "renameSketchCollection":
       return `${mutation.action}:${mutation.payload.collectionId}`;
+    case "renameJournalEntry":
+    case "editJournalEntry":
+      return `${mutation.action}:${mutation.payload.entryId}`;
     case "updateCalendarEvent":
     case "deleteCalendarOccurrence":
     case "deleteCalendarFutureOccurrences":
@@ -941,6 +968,7 @@ export function useTodoStore() {
             memo_collections_count: stateRef.current.memoCollections.length,
             sketches_count: stateRef.current.sketches.length,
             sketch_collections_count: stateRef.current.sketchCollections.length,
+            journal_entries_count: stateRef.current.journalEntries.length,
           },
         });
 
@@ -2063,6 +2091,87 @@ export function useTodoStore() {
     [applyLocalMutation, state.sketchCollections.length, trackProductEvent],
   );
 
+  const addJournalEntry = useCallback(
+    (journalDate: string, title: string) => {
+      const trimmed = title.trim();
+      if (!trimmed || !journalDate) return null;
+
+      const now = Date.now();
+      const entry: JournalEntry = {
+        id: generateId(),
+        title: trimmed,
+        content: "",
+        journalDate,
+        createdAt: now,
+        updatedAt: now,
+        order: state.journalEntries.length,
+      };
+
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          journalEntries: [...prev.journalEntries, entry],
+        }),
+        { action: "addJournalEntry", payload: { entry } },
+      );
+      void trackProductEvent("journal_entry_created", {
+        entries_count_after: state.journalEntries.length + 1,
+      });
+      return entry.id;
+    },
+    [applyLocalMutation, state.journalEntries.length, trackProductEvent],
+  );
+
+  const updateJournalEntryTitle = useCallback(
+    (entryId: string, title: string) => {
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          journalEntries: prev.journalEntries.map((entry) =>
+            entry.id === entryId ? { ...entry, title, updatedAt } : entry,
+          ),
+        }),
+        { action: "renameJournalEntry", payload: { entryId, title, updatedAt } },
+      );
+    },
+    [applyLocalMutation],
+  );
+
+  const updateJournalEntryContent = useCallback(
+    (entryId: string, content: string) => {
+      const updatedAt = Date.now();
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          journalEntries: prev.journalEntries.map((entry) =>
+            entry.id === entryId ? { ...entry, content, updatedAt } : entry,
+          ),
+        }),
+        { action: "editJournalEntry", payload: { entryId, content, updatedAt } },
+      );
+    },
+    [applyLocalMutation],
+  );
+
+  const deleteJournalEntry = useCallback(
+    (entryId: string) => {
+      applyLocalMutation(
+        (prev) => ({
+          ...prev,
+          journalEntries: prev.journalEntries
+            .filter((entry) => entry.id !== entryId)
+            .map((entry, order) => ({ ...entry, order })),
+        }),
+        { action: "deleteJournalEntry", payload: { entryId } },
+      );
+      void trackProductEvent("journal_entry_deleted", {
+        entries_count_after: Math.max(state.journalEntries.length - 1, 0),
+      });
+    },
+    [applyLocalMutation, state.journalEntries.length, trackProductEvent],
+  );
+
   const addCalendarEvent = useCallback(
     (
       eventInput: Omit<CalendarEvent, "id" | "createdAt" | "updatedAt" | "order">,
@@ -2353,6 +2462,10 @@ export function useTodoStore() {
     addSketchCollection,
     updateSketchCollectionTitle,
     deleteSketchCollection,
+    addJournalEntry,
+    updateJournalEntryTitle,
+    updateJournalEntryContent,
+    deleteJournalEntry,
     addCalendarEvent,
     updateCalendarEvent,
     deleteCalendarEvent,

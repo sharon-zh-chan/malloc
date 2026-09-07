@@ -102,6 +102,16 @@ export interface SketchCollection {
   order: number;
 }
 
+export interface JournalEntry {
+  id: string;
+  title: string;
+  content: string;
+  journalDate: string;
+  createdAt: number;
+  updatedAt: number;
+  order: number;
+}
+
 export type CalendarRecurrenceFrequency =
   | "none"
   | "daily"
@@ -156,6 +166,7 @@ export interface AppState {
   memoCollections: MemoCollection[];
   sketches: Sketch[];
   sketchCollections: SketchCollection[];
+  journalEntries: JournalEntry[];
   calendarEvents: CalendarEvent[];
   calendarCategories: CalendarCategory[];
   lastUpdatedAt: number;
