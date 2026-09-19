@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import type {
+  ClipboardEvent as ReactClipboardEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  ReactNode,
+} from "react";
 import type { MemoCollection, TextBlock } from "@/lib/types";
 import {
   DndContext,
@@ -140,6 +144,97 @@ const DEFAULT_FORMATTING_STATE: FormattingState = {
   justifyCenter: false,
   justifyRight: false,
 };
+
+function setTableCellText(cell: HTMLTableCellElement, text: string) {
+  cell.dataset.placeholder = "Cell";
+  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const meaningfulLines = lines.length ? lines : [""];
+  cell.replaceChildren();
+
+  meaningfulLines.forEach((line) => {
+    const paragraph = document.createElement("p");
+    if (line) {
+      paragraph.textContent = line;
+    } else {
+      paragraph.appendChild(document.createElement("br"));
+    }
+    cell.appendChild(paragraph);
+  });
+}
+
+function createEditableTableFragment(rows: string[][]) {
+  const fragment = document.createDocumentFragment();
+  const table = document.createElement("table");
+  const tableBody = document.createElement("tbody");
+  const columnCount = Math.max(...rows.map((row) => row.length), 1);
+
+  rows.forEach((sourceRow) => {
+    const row = document.createElement("tr");
+
+    for (let index = 0; index < columnCount; index += 1) {
+      const cell = document.createElement("td");
+      setTableCellText(cell, sourceRow[index] ?? "");
+      row.appendChild(cell);
+    }
+
+    tableBody.appendChild(row);
+  });
+
+  const trailingParagraph = document.createElement("p");
+  trailingParagraph.innerHTML = "<br>";
+  table.appendChild(tableBody);
+  fragment.append(table, trailingParagraph);
+
+  return fragment;
+}
+
+function createTableFragmentFromDelimitedText(text: string) {
+  const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const rows = normalizedText
+    .replace(/\n$/, "")
+    .split("\n")
+    .map((row) => row.split("\t"));
+  const hasTableShape =
+    rows.length > 1 || rows.some((row) => row.length > 1);
+
+  if (!hasTableShape) return null;
+
+  return createEditableTableFragment(rows);
+}
+
+function createTableFragmentFromHtml(html: string) {
+  if (!html || !/<table[\s>]/i.test(html)) return null;
+
+  const parsedDocument = new DOMParser().parseFromString(html, "text/html");
+  const sourceRows = Array.from(
+    parsedDocument.body.querySelectorAll<HTMLTableRowElement>("tr"),
+  );
+  const rows = sourceRows
+    .map((row) =>
+      Array.from(row.cells).map((cell) => cell.textContent?.trim() ?? ""),
+    )
+    .filter((row) => row.length > 0);
+
+  if (!rows.length) return null;
+
+  return createEditableTableFragment(rows);
+}
+
+function getTableTextForClipboard(fragment: DocumentFragment) {
+  const container = document.createElement("div");
+  container.appendChild(fragment.cloneNode(true));
+  const rows = Array.from(container.querySelectorAll("tr"));
+
+  if (!rows.length) return null;
+
+  return rows
+    .map((row) =>
+      Array.from(row.querySelectorAll("th, td"))
+        .map((cell) => cell.textContent?.trim() ?? "")
+        .join("\t"),
+    )
+    .join("\n");
+}
 
 type SidebarDragData =
   | {
@@ -1570,6 +1665,63 @@ function TextBlockEditor({
     saveEditorContent();
   };
 
+  const handleEditorCopy = (event: ReactClipboardEvent<HTMLDivElement>) => {
+    const selection = window.getSelection();
+    if (
+      !selectionIsInEditor(selection) ||
+      !selection?.rangeCount ||
+      selection.isCollapsed
+    ) {
+      return;
+    }
+
+    const fragment = selection.getRangeAt(0).cloneContents();
+    const container = document.createElement("div");
+    container.appendChild(fragment.cloneNode(true));
+    const selectionTouchesTable =
+      Boolean(container.querySelector("table, tr, td, th")) ||
+      Boolean(getSelectedTableCell());
+
+    if (!selectionTouchesTable) return;
+
+    const tableText = getTableTextForClipboard(fragment);
+    const html = container.innerHTML.trim();
+
+    event.clipboardData.setData(
+      "text/plain",
+      tableText ?? selection.toString(),
+    );
+    if (html) {
+      event.clipboardData.setData("text/html", html);
+    }
+    event.preventDefault();
+  };
+
+  const handleEditorPaste = (event: ReactClipboardEvent<HTMLDivElement>) => {
+    const html = event.clipboardData.getData("text/html");
+    const text = event.clipboardData.getData("text/plain");
+    const tableFragment =
+      createTableFragmentFromHtml(html) ??
+      createTableFragmentFromDelimitedText(text);
+
+    if (tableFragment) {
+      event.preventDefault();
+      const firstCell = tableFragment.querySelector<HTMLTableCellElement>(
+        "td, th",
+      );
+
+      insertNodeAtSelection(tableFragment);
+      placeCaretInCell(firstCell);
+      saveEditorContent();
+      return;
+    }
+
+    event.preventDefault();
+    document.execCommand("insertText", false, text);
+    onUpdateContent(event.currentTarget.innerHTML);
+    syncEditorState();
+  };
+
   useEffect(() => {
     const handleSelectionChange = () => {
       if (selectionIsInEditor(window.getSelection())) {
@@ -1867,13 +2019,8 @@ function TextBlockEditor({
           onUpdateContent(event.currentTarget.innerHTML);
           syncEditorState();
         }}
-        onPaste={(event) => {
-          event.preventDefault();
-          const text = event.clipboardData.getData("text/plain");
-          document.execCommand("insertText", false, text);
-          onUpdateContent(event.currentTarget.innerHTML);
-          syncEditorState();
-        }}
+        onCopy={handleEditorCopy}
+        onPaste={handleEditorPaste}
         className="rich-text-editor mt-4 flex-1 min-h-[380px] rounded-md bg-background/35 px-4 py-3 text-base leading-7 text-foreground outline-none focus:ring-2 focus:ring-primary/20"
         aria-label={`Write content for ${block.title}`}
         data-placeholder="Write paragraphs here..."
