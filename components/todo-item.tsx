@@ -228,6 +228,7 @@ export function TodoItemRow({
   onSetExpanded,
 }: TodoItemProps) {
   const [showAddInput, setShowAddInput] = useState(false);
+  const [pendingAddInput, setPendingAddInput] = useState(false);
   const [newSubtaskText, setNewSubtaskText] = useState("");
   const [completionMessage, setCompletionMessage] = useState("");
   const newSubtaskRef = useRef<HTMLInputElement>(null);
@@ -260,8 +261,23 @@ export function TodoItemRow({
     });
 
   useEffect(() => {
-    if (showAddInput) newSubtaskRef.current?.focus();
+    if (!showAddInput) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      if (newSubtaskRef.current?.isConnected) {
+        newSubtaskRef.current.focus();
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
   }, [showAddInput]);
+
+  useEffect(() => {
+    if (!pendingAddInput || !item.subtasksExpanded) return;
+
+    setShowAddInput(true);
+    setPendingAddInput(false);
+  }, [item.subtasksExpanded, pendingAddInput]);
 
   useEffect(() => {
     if (pendingCount === 0) setCompletionMessage("");
@@ -272,6 +288,16 @@ export function TodoItemRow({
     if (!trimmed) return;
     onAddSubtask(trimmed);
     setNewSubtaskText("");
+  };
+
+  const showSubtaskInput = () => {
+    if (item.subtasksExpanded) {
+      setShowAddInput(true);
+      return;
+    }
+
+    setPendingAddInput(true);
+    onSetExpanded(true);
   };
 
   const toggleParent = () => {
@@ -359,10 +385,7 @@ export function TodoItemRow({
         {item.status === "todo" && (
           <button
             type="button"
-            onClick={() => {
-              setShowAddInput(true);
-              onSetExpanded(true);
-            }}
+            onClick={showSubtaskInput}
             className="flex-shrink-0 p-0.5 text-muted-foreground opacity-60 transition-all hover:text-primary focus:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
             aria-label={`Add subtask to ${item.text}`}
             title="Add subtask"
@@ -399,8 +422,8 @@ export function TodoItemRow({
         </p>
       )}
 
-      {item.subtasksExpanded && (hasSubtasks || showAddInput) && (
-        <div className="ml-10">
+      <div className="ml-10" aria-hidden={!item.subtasksExpanded && !showAddInput}>
+        {item.subtasksExpanded && hasSubtasks && (
           <SortableContext
             items={displaySubtasks.map((subtask) => subtask.id)}
             strategy={verticalListSortingStrategy}
@@ -420,40 +443,41 @@ export function TodoItemRow({
               ))}
             </div>
           </SortableContext>
+        )}
 
-          {showAddInput && item.status === "todo" && (
-            <div className="flex items-center gap-2 py-1 pr-1">
-              <Circle className="h-4 w-4 flex-shrink-0 text-muted-foreground/60" />
-              <input
-                ref={newSubtaskRef}
-                value={newSubtaskText}
-                onChange={(event) => setNewSubtaskText(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") submitSubtask();
-                  if (event.key === "Escape") {
-                    setNewSubtaskText("");
-                    setShowAddInput(false);
-                  }
-                }}
-                onBlur={() => {
-                  if (!newSubtaskText.trim()) setShowAddInput(false);
-                }}
-                placeholder="Add a subtask…"
-                className="min-w-0 flex-1 rounded bg-background/50 px-2 py-1 text-sm text-foreground outline-none ring-primary/30 placeholder:text-muted-foreground focus:ring-2"
-                aria-label={`New subtask for ${item.text}`}
-              />
-              <button
-                type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={submitSubtask}
-                className="text-xs font-semibold text-primary hover:text-primary/80"
-              >
-                Add
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+        {showAddInput && item.status === "todo" && (
+          <div className="flex items-center gap-2 py-1 pr-1">
+            <Circle className="h-4 w-4 flex-shrink-0 text-muted-foreground/60" />
+            <input
+              ref={newSubtaskRef}
+              value={newSubtaskText}
+              onChange={(event) => setNewSubtaskText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") submitSubtask();
+                if (event.key === "Escape") {
+                  setNewSubtaskText("");
+                  setShowAddInput(false);
+                }
+              }}
+              onBlur={() => {
+                if (!newSubtaskText.trim()) setShowAddInput(false);
+              }}
+              placeholder="Add a subtask…"
+              className="min-w-0 flex-1 rounded bg-background/50 px-2 py-1 text-sm text-foreground outline-none ring-primary/30 placeholder:text-muted-foreground focus:ring-2"
+              aria-label={`New subtask for ${item.text}`}
+            />
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={submitSubtask}
+              className="text-xs font-semibold text-primary hover:text-primary/80"
+            >
+              Add
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
